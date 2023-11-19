@@ -83,9 +83,9 @@ def handle_exception(e):
     @apiName catalog
     @apiGroup Catalog
 
-    @apiParam {String} [date] UTC date for the request (defaults to current time)
-    @apiParam {Number} lat=-45.85 Latitude in decimal degrees of observer
-    @apiParam {Number} lon=170.54 Longitude in decimal degrees of observer
+    @apiParam {String} [date=now] UTC date for the request (defaults to current time)
+    @apiParam {Number} lat Latitude in decimal degrees of observer
+    @apiParam {Number} lon Longitude in decimal degrees of observer
     @apiParam {Number} [elevation=0.0] Ignore objects below the specified elevation in decimal degrees
     @apiParam {Number} [alt=0.0] Altitude in meters of observer
 
