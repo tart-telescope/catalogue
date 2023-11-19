@@ -1,7 +1,8 @@
-# (c) 2018-2023 Tim Molteno (tim@elec.ac.nz)
-
+# Caching proxies for the Celestrak catalogues.
+#
+# (c) 2013-2023 Tim Molteno (tim@elec.ac.nz)
+#
 import file_cache
-# sudo pip install sgp4
 
 from sgp4.earth_gravity import wgs84
 from sgp4.io import twoline2rv
@@ -11,6 +12,10 @@ from tart.imaging import location
 import numpy as np
 
 
+'''
+    A class to predict positions from an Ephemeris (the collective noun is Ephemerides).
+    
+'''
 class Sp4Ephemeris:
     def __init__(self, name, sv):
         self.name = name
@@ -29,6 +34,9 @@ class Sp4Ephemeris:
         return loc.ecef_to_horizontal(pos[0], pos[1], pos[2])
 
 
+'''
+    A class to hold a group of ephemeris, and to calculate positions from the entire group
+'''
 class Sp4Ephemerides:
     def __init__(self, local_path, jansky, name_list=None):
         self.jansky = jansky
@@ -77,6 +85,15 @@ class Sp4Ephemerides:
         return ret
 
 
+
+'''
+    Base class for all file caches. These use the correct file located in a directory by date.
+    Files are laid out in a folder structure as below
+
+    name - YYYY - MM - DD.dat
+
+    Only one file is downloaded per day, and all orbital predictions are made from this file.
+'''
 class EphemerisFileCache(file_cache.FileCache):
 
     def __init__(self, name):
@@ -93,6 +110,8 @@ class EphemerisFileCache(file_cache.FileCache):
         return ret
 
 
+
+# Space Based Augmentation Satellites (SBAS)
 class NORADCache(EphemerisFileCache):
 
     def __init__(self):
@@ -100,37 +119,24 @@ class NORADCache(EphemerisFileCache):
 
     def get_url(self, utc_date):
         return "https://celestrak.org/NORAD/elements/gp.php?GROUP=SBAS&FORMAT=TLE"
-        # return "http://www.celestrak.com/NORAD/elements/sbas.txt"
 
     def create_object_from_file(self, local_path):
         return Sp4Ephemerides(local_path, 1.5e6)
 
 
-# class ExtraCache(EphemerisFileCache):
-# 
-#     def __init__(self):
-#         EphemerisFileCache.__init__(self, "norad_active")
-# 
-#     def get_url(self, utc_date):
-#         return "http://www.celestrak.com/NORAD/elements/active.txt"
-# 
-#     def create_object_from_file(self, local_path):
-#         return Sp4Ephemerides(local_path, 1.5e6, name_list=["QZS-4", "QZS-3"])
-# 
-
+# GPS Satellites (USA)
 class GPSCache(EphemerisFileCache):
 
     def __init__(self):
         EphemerisFileCache.__init__(self, "norad_gps")
 
     def get_url(self, utc_date):
-        # return "http://www.celestrak.com/NORAD/elements/gps-ops.txt"
         return "https://celestrak.org/NORAD/elements/gp.php?GROUP=GPS-OPS&FORMAT=TLE"
 
     def create_object_from_file(self, local_path):
         return Sp4Ephemerides(local_path, 1.5e6)
 
-
+# Galileo satellites (Europe)
 class GalileoCache(EphemerisFileCache):
 
     def __init__(self):
@@ -138,12 +144,11 @@ class GalileoCache(EphemerisFileCache):
 
     def get_url(self, utc_date):
         return "https://celestrak.org/NORAD/elements/gp.php?GROUP=GALILEO&FORMAT=TLE"
-        # return "http://www.celestrak.com/NORAD/elements/galileo.txt"
 
     def create_object_from_file(self, local_path):
         return Sp4Ephemerides(local_path, 1.5e6)
 
-
+# Beidou Satellites (China)
 class BeidouCache(EphemerisFileCache):
 
     def __init__(self):
@@ -151,7 +156,6 @@ class BeidouCache(EphemerisFileCache):
 
     def get_url(self, utc_date):
         return "https://celestrak.org/NORAD/elements/gp.php?GROUP=BEIDOU&FORMAT=TLE"
-#        return "https://www.celestrak.com/NORAD/elements/beidou.txt"
 
     def create_object_from_file(self, local_path):
         return Sp4Ephemerides(local_path, 1.5e6)
