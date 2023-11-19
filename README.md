@@ -1,6 +1,6 @@
 ## OBJECT POSITION SERVER
 
-This is a python server that will serve positions of objects that transmit in the L1 band.
+This is a python server that serves positions of objects that transmit in the L1 band.
 
 Author: Tim Molteno. tim@elec.ac.nz
 
