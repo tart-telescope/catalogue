@@ -1,6 +1,6 @@
 # Object Position Server Main API
 #
-# Author Tim Molteno tim@elec.ac.nz (c) 2013-2018
+# Author Tim Molteno tim@elec.ac.nz (c) 2013-2023
 
 
 from flask import Flask

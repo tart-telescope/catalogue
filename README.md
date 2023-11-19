@@ -12,11 +12,11 @@ A computer with [docker](https://docker.io) installed, and having external web a
 
 The easiest way to build this is to use docker. To build the container type
 
-    docker-compose build
+    docker compose build
 
 To run it (the -d puts it in the background)
 
-    docker-compose up -d
+    docker compose up -d
 
 This creates an instance called 'ops'. You can check the logs using 
 
@@ -27,7 +27,7 @@ To exit type Ctrl-p Ctrl-q
     
 To kill the instance
 
-    docker-compose down
+    docker compose down
 
     
 ## Testing

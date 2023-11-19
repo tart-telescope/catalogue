@@ -1,3 +1,4 @@
+# (c) 2018-2023 Tim Molteno (tim@elec.ac.nz)
 
 from tart.imaging import location, sun
 import sky_object

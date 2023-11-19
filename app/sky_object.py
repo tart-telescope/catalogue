@@ -1,3 +1,5 @@
+# Author Tim Molteno tim@elec.ac.nz (c) 2013-2023
+
 class SkyObject:
 
     def __init__(self, name):
