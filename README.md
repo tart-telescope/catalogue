@@ -12,7 +12,7 @@ Author: Tim Molteno. tim@elec.ac.nz
 
 ## Prerequisites
 
-A computer with [docker](https://docker.io) installed, and having external web access to software repositories. We have tested these only on Linux-based computers.
+A computer with [docker](https://docker.io) installed, and having external web access to software repositories. We have tested these instructions only on Linux-based computers.
 
 ## Docker For Object Position Server
 
