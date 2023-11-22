@@ -1,6 +1,12 @@
 ## OBJECT POSITION SERVER
 
-This is a python server that serves positions of objects that transmit in the L1 band.
+This is a python server that provides positions of objects that transmit in the L1 band. These are the objects that are visible to the TART telescope. This server can be used to get an expected sky, by requesting the
+
+and, as an example, the following url (https://tart.elec.ac.nz/catalog/catalog?lat=-45.85&lon=170.54&date=now) will show all the objects above the Dunedin, New Zealand TART.
+
+### API Reference
+
+The API reference generated from the code here is online (https://tart.elec.ac.nz/catalog/doc/index.html)
 
 Author: Tim Molteno. tim@elec.ac.nz
 
