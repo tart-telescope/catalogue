@@ -35,7 +35,11 @@ To kill the instance
 
     docker compose down
 
-    
+## More accurate Power estimates
+
+Steigenberger, Peter, Steffen Thoelert, and Oliver Montenbruck. "GNSS satellite transmit power and its impact on orbit determination." Journal of Geodesy 92.6 (2018): 609-624.
+
+
 ## Testing
 
     wget -qO- "http://localhost:8876/catalog?lat=-45.85&lon=170.54"
