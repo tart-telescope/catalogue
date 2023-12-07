@@ -42,4 +42,15 @@ Steigenberger, Peter, Steffen Thoelert, and Oliver Montenbruck. "GNSS satellite 
 
 ## Testing
 
+Point your browser to the documentation at http://localhost:8877. You can try the following URL 
+
     wget -qO- "http://localhost:8876/catalog?lat=-45.85&lon=170.54"
+
+Testing the bulk_az_el endpoint is a bit more complicated because it requires a POST request with JSON data.
+    
+    import requests
+    json_data =  {"lat": 45.5, "lon": 170.5, "alt": 0, "dates": ["2023-12-07T09:25:55.924113", "2023-12-07T09:25:55.924113"]}
+    r = requests.post('http://localhost:8876/bulk_az_el', json=json_data)
+   
+    curl -X POST -H "Content-type: application/json" -d "{\"lat\": 45.5, \"lon\": 170.5, \"alt\": 0, \
+               \"dates\": [\"2023-12-07T09:25:55.924113\", \"2023-12-07T09:25:55.924113\"]}" "localhost:8876/bulk_az_el"

@@ -4,10 +4,11 @@ ARG DEBIAN_FRONTEND=noninteractive
 
 # debian setup
 RUN apt-get update && apt-get install -y \
-    python3-numpy python3-dateutil \
+    python3-numpy python3-matplotlib python3-dateutil \
     python3-flask python3-flask-cors \
     python3-sgp4 python3-requests python3-tz \
-    python3-waitress python3-pip
+    python3-waitress python3-pip \
+    python3-healpy python3-astropy python3-h5py
 
 RUN rm -rf /var/lib/apt/lists/*
 RUN ls

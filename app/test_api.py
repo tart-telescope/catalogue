@@ -1,3 +1,4 @@
+# (c) 2018-2023 Tim Molteno (tim@elec.ac.nz)
 
 import datetime
 import requests
