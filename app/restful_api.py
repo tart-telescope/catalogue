@@ -156,12 +156,17 @@ def get_pos():
     @apiBody {Number} lat Latitude in degrees of observer
     @apiBody {Number} lon Longitude in degegrees of observer
     @apiBody {Number} alt Altitude in meters of observer
-    @apiBody {String[]} dates Array of dates in isoformat (eg '2023-12-07T09:25:55.924113', '2023-12-07T09:25:55.924113']}
+    @apiBody {String[]} dates Array of dates in isoformat (eg ["2023-12-07T09:25:55.924113", "2023-12-07T09:25:55.924113"]}
     @apiParamExample {json} Request-Example:
               {'lat': lat,
                'lon': lon,
                'alt' : alt,
                'dates': ['2023-12-07T09:25:55.924113', '2023-12-07T09:25:55.924113']}
+
+    @apiExample {python} Example usage:
+                        import requests
+                        json_data =  {"lat": 45.5, "lon": 170.5, "alt": 0, "dates": ["2023-12-07T09:25:55.924113", "2023-12-07T09:25:55.924113"]}
+                        r = requests.post('http://localhost:8876/bulk_az_el', json=json_data)
 
     @apiSuccess {json} Original request with an added field of 'az_el' which is a list of lists of sources, one for each timestamp
 
