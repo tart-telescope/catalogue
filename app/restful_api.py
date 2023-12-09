@@ -7,6 +7,8 @@ from flask import Flask
 from flask import jsonify, request
 from flask_cors import CORS, cross_origin
 
+from werkzeug.middleware.proxy_fix import ProxyFix
+
 import tart.util.utc as utc
 from tart.util import angle
 import traceback
@@ -26,7 +28,7 @@ sun = sun_object.SunObject()
 
 def parse_date(date_string):
     try:
-        if date_string=="now":
+        if date_string == "now":
             d = utc.now()
         else:
             # Deal with a URL that has a + sign replaced by a space
@@ -35,6 +37,7 @@ def parse_date(date_string):
     except Exception as err:
         raise Exception("Invalid Date '{}' {}".format(date_string, err))
     return d
+
 
 def parse_request_date(request):
     if 'date' in request.args:
@@ -71,11 +74,16 @@ def get_catalog_list(date, lat, lon, alt, elevation):
 app = Flask(__name__)
 CORS(app)
 
+app.wsgi_app = ProxyFix(
+    app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1
+)
+
 if not app.debug:
     import logging
     from logging.handlers import RotatingFileHandler
     log_handler = RotatingFileHandler(
-        "catalog.log", mode='a', maxBytes=100000, backupCount=5, encoding=None, delay=False)
+        "catalog.log", mode='a', maxBytes=100000,
+        backupCount=5, encoding=None, delay=False)
     log_handler.setLevel(logging.WARNING)
     app.logger.addHandler(log_handler)
 
@@ -180,7 +188,7 @@ def get_bulk_az_el():
         request_data = request.json
     else:
         return f"Content-Type {content_type} not supported!"
-    
+
     try:
         print(f"Request data {request_data}")
         dates_param = request_data['dates']
@@ -194,8 +202,8 @@ def get_bulk_az_el():
 
         res = {'lat': lat.to_degrees(),
                'lon': lon.to_degrees(),
-               'alt' : alt}
-        
+               'alt': alt}
+
         date_list = [parse_date(ts) for ts in dates_param]
         res['dates'] = [d.isoformat() for d in date_list]
         res['az_el'] = [get_catalog_list(d, lat, lon, alt, elevation) for d in date_list]
@@ -207,7 +215,6 @@ def get_bulk_az_el():
         ret = f"Exception: {err}"
         lines = tb.split("\n")
         return jsonify({"error": ret, "traceback": lines, "param": f"{res}"})
-
 
 
 if __name__ == '__main__':
