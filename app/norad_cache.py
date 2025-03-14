@@ -12,11 +12,12 @@ from tart.imaging import location
 import numpy as np
 
 
-'''
-    A class to predict positions from an Ephemeris (the collective noun is Ephemerides).
-    
-'''
+
 class Sp4Ephemeris:
+    '''
+        A class to predict positions from an Ephemeris
+        (the collective noun is Ephemerides).
+    '''
     def __init__(self, name, sv):
         self.name = name
         self.sv = sv
@@ -34,10 +35,11 @@ class Sp4Ephemeris:
         return loc.ecef_to_horizontal(pos[0], pos[1], pos[2])
 
 
-'''
-    A class to hold a group of ephemeris, and to calculate positions from the entire group
-'''
 class Sp4Ephemerides:
+    '''
+        A class to hold a group of ephemeris, and to calculate positions
+        from the entire group
+    '''
     def __init__(self, local_path, jansky, name_list=None):
         self.jansky = jansky
         self.satellites = []
@@ -85,17 +87,18 @@ class Sp4Ephemerides:
         return ret
 
 
-
-'''
-    Base class for all file caches. These use the correct file located in a directory by date.
-    Files are laid out in a folder structure as below
-
-    name - YYYY - MM - DD.dat
-
-    Only one file is downloaded per day, and all orbital predictions are made from this file.
-'''
 class EphemerisFileCache(file_cache.FileCache):
+    '''
+        Base class for all file caches. These use the correct file located
+        in a directory by date.
 
+        Files are laid out in a folder structure as below
+
+        name - YYYY - MM - DD.dat
+
+        Only one file is downloaded per day, and all orbital predictions
+        are made from this file.
+    '''
     def __init__(self, name):
         file_cache.FileCache.__init__(self, name)
 
@@ -110,10 +113,8 @@ class EphemerisFileCache(file_cache.FileCache):
         return ret
 
 
-
-# Space Based Augmentation Satellites (SBAS)
 class NORADCache(EphemerisFileCache):
-
+    # Space Based Augmentation Satellites (SBAS)
     def __init__(self):
         EphemerisFileCache.__init__(self, "norad_sbas")
 
@@ -136,6 +137,7 @@ class GPSCache(EphemerisFileCache):
     def create_object_from_file(self, local_path):
         return Sp4Ephemerides(local_path, 1.5e6)
 
+
 # Galileo satellites (Europe)
 class GalileoCache(EphemerisFileCache):
 
@@ -147,6 +149,7 @@ class GalileoCache(EphemerisFileCache):
 
     def create_object_from_file(self, local_path):
         return Sp4Ephemerides(local_path, 1.5e6)
+
 
 # Beidou Satellites (China)
 class BeidouCache(EphemerisFileCache):

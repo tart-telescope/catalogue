@@ -49,7 +49,7 @@ def parse_request_date(request):
     current_date = utc.now()
     if ((d - current_date).total_seconds() > 86400.0):
         raise Exception(
-            f"Date '{date_string}' more than 24 hours in future. {current_date} {d}")
+            f"Date '{date_string}' > 24 hours in future. {current_date} {d}")
     return d
 
 
