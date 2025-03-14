@@ -1,0 +1,18 @@
+[project]
+name = "app-skyfield"
+version = "0.1.0"
+description = "Catalog for TART objects"
+authors = [
+    {name = "Tim Molteno",email = "tim@molteno.net"}
+]
+license = {text = "MIT"}
+readme = "README.md"
+requires-python = ">=3.0"
+dependencies = [
+    "skyfield (>=1.51,<2.0)"
+]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
