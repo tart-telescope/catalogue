@@ -1,0 +1,21 @@
+# Run the object position server container.
+# (c) 2018-2023 Tim Molteno (tim@elec.ac.nz)
+# License GPL v3
+
+services:
+    object-position-server:
+        build: 
+            context: .
+        ports:
+            - 8876:8876
+        restart: unless-stopped
+        # environment:
+        #     - UVICORN_ROOT_PATH="/catalog"
+
+        volumes:
+            - ~/catalog_cache:/object_position_server/orbit_data
+        logging:
+            driver: "json-file"
+            options:
+                max-file: "2"
+                max-size: "1m"

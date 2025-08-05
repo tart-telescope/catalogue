@@ -6,7 +6,7 @@ import os
 import traceback
 import logging
 
-import sky_object
+from tart_catalogue import sky_object
 import tart.util.utc as utc
 
 

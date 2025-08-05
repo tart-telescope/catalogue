@@ -2,7 +2,7 @@
 #
 # (c) 2013-2023 Tim Molteno (tim@elec.ac.nz)
 #
-import file_cache
+import tart_catalogue.file_cache as file_cache
 
 from sgp4.earth_gravity import wgs84
 from sgp4.io import twoline2rv
