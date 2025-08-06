@@ -25,10 +25,10 @@ class FileCache(sky_object.SkyObject):
         return f"ftp://cddis.gsfc.nasa.gov/gps/data/{path}"
 
     def get_local_filename(self, utc_date):
-        return "{}/{}/{}.dat".format(utc_date.year, utc_date.month, utc_date.day)
+        return os.path.join(utc_date.year, utc_date.month, utc_date.day)
 
     def get_local_path(self, fname):
-        return "{}/{}".format(self.cache_root, fname)
+        return os.path.join(self.cache_root, fname)
 
     def create_object_from_file(self, local_path):
         # Override to create the object from the file

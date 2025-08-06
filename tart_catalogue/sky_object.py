@@ -9,6 +9,6 @@ class SkyObject:
         raise Exception(
             "This cache object must have an overriden get_positions() method")
 
-    def get_az_el(self, date, lat, lon, alt):
+    def get_az_el(self, date, lat, lon, alt, elevation):
         raise Exception(
             "This cache object must have an overriden get_az_el() method")
