@@ -66,8 +66,7 @@ app = FastAPI(
     description="API to provide a catalog of known objects",
     version="0.0.1",
     docs_url="/docs",
-    redoc_url="/redoc",
-    debug=True
+    redoc_url="/redoc"
 )
 
 # Add CORS middleware
