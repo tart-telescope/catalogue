@@ -1,65 +1,34 @@
 from fastapi.testclient import TestClient
+import datetime
+import unittest
 
 from .main import app
 
-client = TestClient(app)
 
+def request(dt):
+    with TestClient(app) as client:
+        payload = {'date': dt.isoformat(),
+                    'lat': -45.87,
+                    'lon': 170.6, 'elevation': 45}
 
-def test_read_item():
-    response = client.get("/position", headers={"X-Token": "coneofsilence"})
-    assert response.status_code == 200
-    assert response.json() == {
-        "id": "foo",
-        "title": "Foo",
-        "description": "There goes my hero",
-    }
+        r = client.get('/catalog', params=payload)
+        return r
 
+class TestCatalog(unittest.TestCase):
 
-def test_read_item_bad_token():
-    response = client.get("/items/foo", headers={"X-Token": "hailhydra"})
-    assert response.status_code == 400
-    assert response.json() == {"detail": "Invalid X-Token header"}
+    def test_basic_request(self):
+        ans = request(datetime.datetime.now(datetime.timezone.utc))
+        for sv in ans.json():
+            self.assertTrue('r' in sv)
+            self.assertTrue('el' in sv)
+            self.assertTrue('az' in sv)
+            self.assertTrue('jy' in sv)
 
+    def test_future_date(self):
+        t = datetime.datetime.now(datetime.timezone.utc)
+        dt = datetime.timedelta(days=2)
+        ans = request(t + dt)
+        print(ans)
+        print(ans.json())
 
-def test_read_nonexistent_item():
-    response = client.get("/items/baz", headers={"X-Token": "coneofsilence"})
-    assert response.status_code == 404
-    assert response.json() == {"detail": "Item not found"}
-
-
-def test_create_item():
-    response = client.post(
-        "/items/",
-        headers={"X-Token": "coneofsilence"},
-        json={"id": "foobar", "title": "Foo Bar", "description": "The Foo Barters"},
-    )
-    assert response.status_code == 200
-    assert response.json() == {
-        "id": "foobar",
-        "title": "Foo Bar",
-        "description": "The Foo Barters",
-    }
-
-
-def test_create_item_bad_token():
-    response = client.post(
-        "/items/",
-        headers={"X-Token": "hailhydra"},
-        json={"id": "bazz", "title": "Bazz", "description": "Drop the bazz"},
-    )
-    assert response.status_code == 400
-    assert response.json() == {"detail": "Invalid X-Token header"}
-
-
-def test_create_existing_item():
-    response = client.post(
-        "/items/",
-        headers={"X-Token": "coneofsilence"},
-        json={
-            "id": "foo",
-            "title": "The Foo ID Stealers",
-            "description": "There goes my stealer",
-        },
-    )
-    assert response.status_code == 409
-    assert response.json() == {"detail": "Item already exists"}
+        assert ans.status_code == 400

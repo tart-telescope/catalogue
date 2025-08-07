@@ -3,6 +3,8 @@
 # Author Tim Molteno tim@elec.ac.nz (c) 2013-2024
 # Converted from Flask to FastAPI
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional, List, Dict, Any
@@ -20,23 +22,6 @@ import logging
 
 from logging.handlers import RotatingFileHandler
 
-# Initialize the FastAPI app
-app = FastAPI(
-   title="Object Position Server REST API",
-   description="API to provide a catalog of known objects",
-   version="0.0.1",
-   docs_url="/docs",
-   redoc_url="/redoc"
-)
-
-# Add CORS middleware
-app.add_middleware(
-   CORSMiddleware,
-   allow_origins=["*"],
-   allow_credentials=True,
-   allow_methods=["*"],
-   allow_headers=["*"],
-)
 
 # Global cache objects - initialized at startup
 waas_cache = None
@@ -58,8 +43,8 @@ if not logger.handlers:
     logger.setLevel(logging.WARNING)
 
 
-@app.on_event("startup")
-async def startup_event():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     """Initialize caches on startup"""
     global waas_cache, gps_cache, galileo_cache, beidou_cache, sun
 
@@ -70,6 +55,42 @@ async def startup_event():
     beidou_cache = norad_cache.BeidouCache()
     sun = sun_object.SunObject()
     logger.info("Caches initialized successfully")
+    yield
+    logger.info("Shutdown completed.")
+
+
+# Initialize the FastAPI app
+app = FastAPI(
+    lifespan=lifespan,
+    title="Object Position Server REST API",
+    description="API to provide a catalog of known objects",
+    version="0.0.1",
+    docs_url="/docs",
+    redoc_url="/redoc",
+    debug=True
+)
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# @app.on_event("startup")
+# async def startup_event():
+#     """Initialize caches on startup"""
+#     global waas_cache, gps_cache, galileo_cache, beidou_cache, sun
+
+#     logger.info("Initializing caches...")
+#     waas_cache = norad_cache.NORADCache()
+#     gps_cache = norad_cache.GPSCache()
+#     galileo_cache = norad_cache.GalileoCache()
+#     beidou_cache = norad_cache.BeidouCache()
+#     sun = sun_object.SunObject()
+#     logger.info("Caches initialized successfully")
 
 
 def parse_date(date_string: Optional[str] = None):
@@ -93,6 +114,7 @@ def parse_date(date_string: Optional[str] = None):
 
 
 def get_catalog_list(date, lat, lon, alt, elevation):
+    logger.info(f"get_catalog_list({date}, {lat}, {lon}, {alt}, {elevation}")
     cat = waas_cache.get_az_el(date, lat, lon, alt, elevation)
     cat += gps_cache.get_az_el(date, lat, lon, alt, elevation)
     cat += galileo_cache.get_az_el(date, lat, lon, alt, elevation)
