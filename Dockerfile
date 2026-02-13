@@ -1,5 +1,5 @@
 FROM debian:bookworm
-MAINTAINER Tim Molteno "tim@elec.ac.nz"
+LABEL by Tim Molteno "tim@elec.ac.nz"
 ARG DEBIAN_FRONTEND=noninteractive
 
 # debian setup
