@@ -17,6 +17,7 @@ class FileCache(sky_object.SkyObject):
         self.last_download_attempt = {}
         self.cache = {}
 
+    #  curl -u anonymous:tim@elec.ac.nz --ftp-ssl ftp://gdc.cddis.eosdis.nasa.gov/gps/data/
     def get_url(self, utc_date):
         doy = "%.3d" % utc_date.yday()
         yy = "%.2d" % (utc_date.year()-2000)
