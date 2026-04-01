@@ -3,25 +3,18 @@
 # Author Tim Molteno tim@elec.ac.nz (c) 2013-2024
 # Converted from Flask to FastAPI
 
+import logging
+import traceback
 from contextlib import asynccontextmanager
+from logging.handlers import RotatingFileHandler
+from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from typing import Optional, List, Dict, Any
 from pydantic import BaseModel
+from tart.util import angle, utc
 
-from tart.util import utc
-from tart.util import angle
-
-from tart_catalogue import norad_cache
-from tart_catalogue import sun_object
-
-import traceback
-import logging
-
-
-from logging.handlers import RotatingFileHandler
-
+from tart_catalogue import norad_cache, sun_object
 
 # Global cache objects - initialized at startup
 waas_cache = None
@@ -33,11 +26,18 @@ sun = None
 # Setup logging
 logger = logging.getLogger("catalog")
 if not logger.handlers:
-    log_handler = RotatingFileHandler("catalog.log", mode='a',
-                                      maxBytes=100000, backupCount=5,
-                                      encoding=None, delay=False)
+    log_handler = RotatingFileHandler(
+        "catalog.log",
+        mode="a",
+        maxBytes=100000,
+        backupCount=5,
+        encoding=None,
+        delay=False,
+    )
     log_handler.setLevel(logging.WARNING)
-    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    formatter = logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    )
     log_handler.setFormatter(formatter)
     logger.addHandler(log_handler)
     logger.setLevel(logging.WARNING)
@@ -66,7 +66,7 @@ app = FastAPI(
     description="API to provide a catalog of known objects",
     version="0.0.1",
     docs_url="/docs",
-    redoc_url="/redoc"
+    redoc_url="/redoc",
 )
 
 # Add CORS middleware
@@ -97,22 +97,27 @@ def parse_date(date_string: Optional[str] = None):
     if date_string:
         try:
             # Deal with a URL that has a + sign replaced by a space
-            d = utc.from_string(date_string.replace(' ', '+'))
+            d = utc.from_string(date_string.replace(" ", "+"))
         except Exception as err:
-            raise HTTPException(status_code=400,
-                                detail=f"Invalid Date '{date_string}' {err}")
+            raise HTTPException(
+                status_code=400, detail=f"Invalid Date '{date_string}' {err}"
+            )
     else:
         d = utc.now()
 
     current_date = utc.now()
-    if ((d - current_date).total_seconds() > 86400.0):
-        raise HTTPException(status_code=400,
-                            detail=f"Date '{date_string}' more than 24 hours in future.")
+    if (d - current_date).total_seconds() > 86400.0:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Date '{date_string}' more than 24 hours in future.",
+        )
 
     return d
 
 
 def get_catalog_list(date, lat, lon, alt, elevation):
+    global waas_cache, gps_cache, galileo_cache, beidou_cache, sun
+
     logger.info(f"get_catalog_list({date}, {lat}, {lon}, {alt}, {elevation}")
     cat = waas_cache.get_az_el(date, lat, lon, alt, elevation)
     cat += gps_cache.get_az_el(date, lat, lon, alt, elevation)
@@ -120,7 +125,6 @@ def get_catalog_list(date, lat, lon, alt, elevation):
     cat += beidou_cache.get_az_el(date, lat, lon, alt, elevation)
     cat += sun.get_az_el(date, lat, lon, alt, elevation)
     return cat
-
 
 
 @app.exception_handler(Exception)
@@ -138,14 +142,15 @@ async def get_catalog(
     lon: float = Query(..., description="Longitude in decimal degrees of observer"),
     alt: float = Query(0.0, description="Altitude in meters of observer"),
     ele: float = Query(0.0, description="Elevation in degrees"),
-    date: Optional[str] = Query(None, description="UTC date for the request (ISO format)")
+    date: Optional[str] = Query(
+        None, description="UTC date for the request (ISO format)"
+    ),
 ) -> List[Dict[str, Any]]:
     """
     Request Object Positions in local horizontal (El Az) coordinates
 
     Returns a list of objects with local horizontal (El Az) coordinates
     """
-    catalogue_sources = [waas_cache, gps_cache, galileo_cache, beidou_cache, sun]
 
     try:
         logger.info("Hi")
@@ -165,13 +170,17 @@ async def get_catalog(
 
 @app.get("/position", response_model=List[Dict[str, Any]])
 async def get_position(
-   date: Optional[str] = Query(None, description="UTC date for the request (ISO format)")
+    date: Optional[str] = Query(
+        None, description="UTC date for the request (ISO format)"
+    ),
 ) -> List[Dict[str, Any]]:
     """
     Request SV Positions in ECEF coordinates
 
     Returns a list of objects with coordinates in ECEF
     """
+    global waas_cache, gps_cache, galileo_cache, beidou_cache, sun
+
     catalogue_sources = [waas_cache, gps_cache, galileo_cache, beidou_cache]
     try:
         parsed_date = parse_date(date)
@@ -197,6 +206,7 @@ class BulkAzElRequest(BaseModel):
     """
     Schema for the bulk_az_el endpoint request body.
     """
+
     lat: float
     lon: float
     alt: float
@@ -226,17 +236,15 @@ def get_bulk_az_el_fastapi(request_data: BulkAzElRequest):
         # but since we have a Pydantic model, we can rely on the `alt` field.
         elevation = 0.0
 
-        res = {
-            'lat': lat.to_degrees(),
-            'lon': lon.to_degrees(),
-            'alt': alt
-        }
+        res = {"lat": lat.to_degrees(), "lon": lon.to_degrees(), "alt": alt}
 
         # The rest of the logic remains the same.
         date_list = [parse_date(ts) for ts in dates_param]
-        res['dates'] = [d.isoformat() for d in date_list]
+        res["dates"] = [d.isoformat() for d in date_list]
 
-        res['az_el'] = [get_catalog_list(d, lat, lon, alt, elevation) for d in date_list]
+        res["az_el"] = [
+            get_catalog_list(d, lat, lon, alt, elevation) for d in date_list
+        ]
 
         # FastAPI automatically converts dictionaries to JSON,
         # so there's no need for `jsonify()`.
@@ -251,8 +259,8 @@ def get_bulk_az_el_fastapi(request_data: BulkAzElRequest):
             detail={
                 "error": str(err),
                 "traceback": tb.split("\n"),
-                "param": request_data.dict()
-            }
+                "param": request_data.dict(),
+            },
         )
 
 
@@ -264,5 +272,6 @@ async def root():
 
 if __name__ == "__main__":
     import uvicorn
+
     print("Starting Object Position Server with FastAPI")
     uvicorn.run(app, host="0.0.0.0", port=8876)

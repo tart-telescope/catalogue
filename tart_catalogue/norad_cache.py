@@ -2,32 +2,32 @@
 #
 # (c) 2013-2023 Tim Molteno (tim@elec.ac.nz)
 #
-import tart_catalogue.file_cache as file_cache
-
+import numpy as np
 from sgp4.earth_gravity import wgs84
 from sgp4.io import twoline2rv
-
 from tart.imaging import location
 
-import numpy as np
-
+import tart_catalogue.file_cache as file_cache
 
 
 class Sp4Ephemeris:
-    '''
-        A class to predict positions from an Ephemeris
-        (the collective noun is Ephemerides).
-    '''
+    """
+    A class to predict positions from an Ephemeris
+    (the collective noun is Ephemerides).
+    """
+
     def __init__(self, name, sv):
         self.name = name
         self.sv = sv
 
     def get_position(self, date):
         position, velocity = self.sv.propagate(
-            date.year, date.month, date.day, date.hour, date.minute, date.second)
-        vel = [velocity[0]*1000.0, velocity[1]*1000.0, velocity[2]*1000.0]
+            date.year, date.month, date.day, date.hour, date.minute, date.second
+        )
+        vel = [velocity[0] * 1000.0, velocity[1] * 1000.0, velocity[2] * 1000.0]
         pos = location.eci_to_ecef(
-            date, position[0]*1000.0, position[1]*1000.0, position[2]*1000.0)
+            date, position[0] * 1000.0, position[1] * 1000.0, position[2] * 1000.0
+        )
         return pos, vel
 
     def get_az_el(self, date, loc):
@@ -36,10 +36,11 @@ class Sp4Ephemeris:
 
 
 class Sp4Ephemerides:
-    '''
-        A class to hold a group of ephemeris, and to calculate positions
-        from the entire group
-    '''
+    """
+    A class to hold a group of ephemeris, and to calculate positions
+    from the entire group
+    """
+
     def __init__(self, local_path, jansky, name_list=None):
         self.jansky = jansky
         self.satellites = []
@@ -47,13 +48,13 @@ class Sp4Ephemerides:
         lines = f.readlines()
         for i, l in enumerate(lines):
             # print(i, l)
-            if (i % 3 == 0):
+            if i % 3 == 0:
                 name = l.strip()
 
-            if (i % 3 == 1):
+            if i % 3 == 1:
                 line1 = l.strip()
 
-            if (i % 3 == 2):
+            if i % 3 == 2:
                 line2 = l.strip()
                 sv = twoline2rv(line1, line2, wgs84)
                 if name_list is None:
@@ -68,8 +69,7 @@ class Sp4Ephemerides:
         ret = []
         for sv in self.satellites:
             p, v = sv.get_position(date)
-            ret.append({'name': sv.name, 'ecef': p,
-                       'ecef_dot': v, 'jy': self.jansky})
+            ret.append({"name": sv.name, "ecef": p, "ecef_dot": v, "jy": self.jansky})
         return ret
 
     def get_az_el(self, date, lat, lon, alt, elevation):
@@ -81,24 +81,26 @@ class Sp4Ephemerides:
             _r, _el, _az = sv.get_az_el(date, loc)
             el, az = np.round([_el.to_degrees(), _az.to_degrees()], decimals=6)
             r = np.round(_r, decimals=1)
-            if (el >= elevation):
-                ret.append({'name': sv.name, 'r': r, 'el': el,
-                           'az': az, 'jy': self.jansky})
+            if el >= elevation:
+                ret.append(
+                    {"name": sv.name, "r": r, "el": el, "az": az, "jy": self.jansky}
+                )
         return ret
 
 
 class EphemerisFileCache(file_cache.FileCache):
-    '''
-        Base class for all file caches. These use the correct file located
-        in a directory by date.
+    """
+    Base class for all file caches. These use the correct file located
+    in a directory by date.
 
-        Files are laid out in a folder structure as below
+    Files are laid out in a folder structure as below
 
-        name - YYYY - MM - DD.dat
+    name - YYYY - MM - DD.dat
 
-        Only one file is downloaded per day, and all orbital predictions
-        are made from this file.
-    '''
+    Only one file is downloaded per day, and all orbital predictions
+    are made from this file.
+    """
+
     def __init__(self, name):
         file_cache.FileCache.__init__(self, name)
 
@@ -127,7 +129,6 @@ class NORADCache(EphemerisFileCache):
 
 # GPS Satellites (USA)
 class GPSCache(EphemerisFileCache):
-
     def __init__(self):
         EphemerisFileCache.__init__(self, "norad_gps")
 
@@ -140,7 +141,6 @@ class GPSCache(EphemerisFileCache):
 
 # Galileo satellites (Europe)
 class GalileoCache(EphemerisFileCache):
-
     def __init__(self):
         EphemerisFileCache.__init__(self, "norad_galileo")
 
@@ -153,7 +153,6 @@ class GalileoCache(EphemerisFileCache):
 
 # Beidou Satellites (China)
 class BeidouCache(EphemerisFileCache):
-
     def __init__(self):
         EphemerisFileCache.__init__(self, "norad_beidou")
 
@@ -166,5 +165,6 @@ class BeidouCache(EphemerisFileCache):
 
 if __name__ == "__main__":
     import tart.util.utc as utc
+
     cache = NORADCache()
     print(cache.get_positions(utc.now()))
