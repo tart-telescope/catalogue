@@ -16,9 +16,19 @@ class Sp4Ephemeris:
     (the collective noun is Ephemerides).
     """
 
-    def __init__(self, name, sv):
+    def __init__(self, name, sv, line1="", line2=""):
         self.name = name
         self.sv = sv
+        self.line1 = line1
+        self.line2 = line2
+
+    def to_dict(self):
+        """Serialize the raw TLE data for client-side position calculation."""
+        return {
+            "name": self.name,
+            "line1": self.line1,
+            "line2": self.line2,
+        }
 
     def get_position(self, date):
         position, velocity = self.sv.propagate(
@@ -58,12 +68,12 @@ class Sp4Ephemerides:
                 line2 = l.strip()
                 sv = twoline2rv(line1, line2, wgs84)
                 if name_list is None:
-                    self.satellites.append(Sp4Ephemeris(name, sv))
+                    self.satellites.append(Sp4Ephemeris(name, sv, line1, line2))
                 else:
                     # Check that name is in the list.
                     for n in name_list:
                         if n in name:
-                            self.satellites.append(Sp4Ephemeris(name, sv))
+                            self.satellites.append(Sp4Ephemeris(name, sv, line1, line2))
 
     def get_positions(self, date):
         ret = []
@@ -71,6 +81,11 @@ class Sp4Ephemerides:
             p, v = sv.get_position(date)
             ret.append({"name": sv.name, "ecef": p, "ecef_dot": v, "jy": self.jansky})
         return ret
+
+    def get_ephemeris_data(self):
+        """Return raw TLE data for all satellites so clients can
+        compute positions themselves."""
+        return [sv.to_dict() for sv in self.satellites]
 
     def get_az_el(self, date, lat, lon, alt, elevation):
         ret = []
@@ -108,6 +123,10 @@ class EphemerisFileCache(file_cache.FileCache):
         eph = self.get_object(date)
         ret = eph.get_positions(date)
         return ret
+
+    def get_ephemeris_data(self, date):
+        eph = self.get_object(date)
+        return eph.get_ephemeris_data()
 
     def get_az_el(self, date, lat, lon, alt, elevation):
         eph = self.get_object(date)

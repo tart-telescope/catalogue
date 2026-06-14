@@ -281,7 +281,7 @@ async def get_ephemerides(
         parsed_date = parse_date(date)
         ret = []
         for src in catalogue_sources:
-            ret += src.get_positions(parsed_date)
+            ret += src.get_ephemeris_data(parsed_date)
         return ret
     except HTTPException:
         raise
