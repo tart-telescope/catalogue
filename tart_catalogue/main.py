@@ -264,6 +264,34 @@ def get_bulk_az_el_fastapi(request_data: BulkAzElRequest):
         )
 
 
+@app.get("/ephemerides", response_model=List[Dict[str, Any]])
+async def get_ephemerides(
+    date: Optional[str] = Query(
+        None, description="UTC date for the request (ISO format)"
+    ),
+) -> List[Dict[str, Any]]:
+    """
+    Return ephemerides (ECEF position and velocity) for all known
+    satellite constellations at a given date.
+    """
+    global waas_cache, gps_cache, galileo_cache, beidou_cache
+
+    catalogue_sources = [waas_cache, gps_cache, galileo_cache, beidou_cache]
+    try:
+        parsed_date = parse_date(date)
+        ret = []
+        for src in catalogue_sources:
+            ret += src.get_positions(parsed_date)
+        return ret
+    except HTTPException:
+        raise
+    except Exception as err:
+        logger.error(f"Error in get_ephemerides: {err}")
+        tb = traceback.format_exc()
+        logger.error(f"Traceback: {tb}")
+        raise HTTPException(status_code=500, detail=f"Exception: {err}")
+
+
 @app.get("/")
 async def root():
     """Root endpoint"""
