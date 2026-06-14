@@ -14,16 +14,17 @@ RUN python3 -m venv --system-site-packages $VIRTUAL_ENV
 ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 
 # Install tart python packages
-RUN pip install --no-cache-dir --no-compile poetry
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 WORKDIR /object_position_server
 COPY README.md .
 COPY pyproject.toml .
-RUN poetry install --without=dev --no-root
+COPY uv.lock .
+RUN uv sync --no-dev --frozen
 
 COPY tart_catalogue tart_catalogue
 
-RUN poetry install --without=dev
+RUN uv sync --no-dev --frozen
 RUN ls -rl
 WORKDIR /object_position_server
 
