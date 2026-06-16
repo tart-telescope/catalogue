@@ -1,5 +1,5 @@
 use chrono::{DateTime, Datelike, Timelike, Utc};
-use sgp4::{Constants, Elements};
+use sgp4::{Constants, Elements, MinutesSinceEpoch};
 use std::error::Error;
 
 /// A TLE record as returned by the /ephemerides endpoint.
@@ -48,15 +48,6 @@ impl CatalogueClient {
         Ok(records)
     }
 
-    /// Convert a DateTime<Utc> to days since 1949-12-31 00:00 UT (sgp4 epoch).
-    fn datetime_to_sgp4_days(dt: &DateTime<Utc>) -> f64 {
-        // SGP4 epoch is 1949-12-31 00:00:00 UT = JD 2433281.5
-        // Each Julian day is 86400 seconds.
-        let sgp4_epoch_jd = 2433281.5;
-        let jd = julian_day(dt);
-        jd - sgp4_epoch_jd
-    }
-
     /// Fetch TLEs and compute positions for a list of dates.
     async fn compute_positions(
         &self,
@@ -67,32 +58,46 @@ impl CatalogueClient {
         eprintln!("Fetched {} TLE records", tles.len());
 
         let mut all_positions = Vec::new();
+        let mut skipped = 0u32;
 
         for tle in &tles {
-            let elements = Elements::from_tle(
+            let elements = match Elements::from_tle(
                 Some(tle.name.clone()),
                 tle.line1.as_bytes(),
                 tle.line2.as_bytes(),
-            )
-            .map_err(|e| format!("Failed to parse TLE for {}: {:?}", tle.name, e))?;
+            ) {
+                Ok(e) => e,
+                Err(e) => {
+                    eprintln!("  skip {} (bad TLE): {:?}", tle.name, e);
+                    skipped += 1;
+                    continue;
+                }
+            };
 
-            let constants = Constants::from_elements(&elements)
-                .map_err(|e| format!("Failed to create propagator for {}: {:?}", tle.name, e))?;
+            let constants = match Constants::from_elements(&elements) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("  skip {} (bad constants): {:?}", tle.name, e);
+                    skipped += 1;
+                    continue;
+                }
+            };
 
             let tle_epoch_days = elements.epoch();
 
             for date in dates {
                 let date_days = Self::datetime_to_sgp4_days(date);
-                let minutes_since_epoch = (date_days - tle_epoch_days) * 24.0 * 60.0;
+                let minutes_since_epoch =
+                    MinutesSinceEpoch((date_days - tle_epoch_days) * 24.0 * 60.0);
 
-                let prediction = constants
-                    .propagate(minutes_since_epoch)
-                    .map_err(|e| {
-                        format!(
-                            "Propagation failed for {} at {}: {:?}",
-                            tle.name, date, e
-                        )
-                    })?;
+                let prediction = match constants.propagate(minutes_since_epoch) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        eprintln!("  skip {} at {}: {:?}", tle.name, date, e);
+                        skipped += 1;
+                        continue;
+                    }
+                };
 
                 let position = prediction.position;
                 let velocity = prediction.velocity;
@@ -106,7 +111,23 @@ impl CatalogueClient {
             }
         }
 
+        if skipped > 0 {
+            eprintln!("Skipped {} satellite/date combinations", skipped);
+        }
+        eprintln!(
+            "Computed {} positions from {} TLEs",
+            all_positions.len(),
+            tles.len()
+        );
+
         Ok(all_positions)
+    }
+
+    /// Convert a `DateTime<Utc>` to days since 1949-12-31 00:00 UT (sgp4 epoch).
+    fn datetime_to_sgp4_days(dt: &DateTime<Utc>) -> f64 {
+        let sgp4_epoch_jd = 2433281.5;
+        let jd = julian_day(dt);
+        jd - sgp4_epoch_jd
     }
 }
 
@@ -133,16 +154,13 @@ fn julian_day(dt: &DateTime<Utc>) -> f64 {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    // Default server URL - override with TART_CATALOGUE_URL env var.
     let base_url = std::env::var("TART_CATALOGUE_URL")
         .unwrap_or_else(|_| "https://tart.elec.ac.nz/catalog".to_string());
 
     let client = CatalogueClient::new(&base_url);
 
-    // Query the current date's TLEs.
     let now = Utc::now();
 
-    // Compute positions at now, +6h, +12h, +18h, +24h.
     let dates: Vec<DateTime<Utc>> = (0..=24)
         .step_by(6)
         .map(|h| now + chrono::Duration::hours(h))
@@ -150,7 +168,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let positions = client.compute_positions(&now, &dates).await?;
 
-    // Print as JSON.
     let json = serde_json::to_string_pretty(&positions)?;
     println!("{}", json);
 

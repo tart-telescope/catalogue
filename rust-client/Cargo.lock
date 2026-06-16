@@ -1023,11 +1023,10 @@ dependencies = [
 
 [[package]]
 name = "sgp4"
-version = "0.9.1"
+version = "2.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "375c65e48ba1bf0f964f91cac83339b5294888e9605d882a1646f7eaebbcc498"
+checksum = "9467b9a7be8485ed8be0f336d399c8f32c0fcd60686e7dd2ed3dab75c9a73eb3"
 dependencies = [
- "anyhow",
  "chrono",
  "serde",
  "serde_json",
@@ -1137,7 +1136,7 @@ dependencies = [
 
 [[package]]
 name = "tart-catalogue"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "reqwest",
