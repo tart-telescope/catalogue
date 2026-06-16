@@ -129,6 +129,9 @@ ENV/
 env.bak/
 venv.bak/
 
+# Runtime cache
+orbit_data/
+
 # Spyder project settings
 .spyderproject
 .spyproject
