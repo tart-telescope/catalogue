@@ -14,6 +14,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from tart.util import angle, utc
 
+# Import sky_object first to register the submodule before
+# norad_cache -> file_cache and sun_object need it (circular import).
+import tart_catalogue.sky_object  # noqa: F401
 from tart_catalogue import norad_cache, sun_object
 
 # Global cache objects - initialized at startup
