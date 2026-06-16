@@ -1,56 +1,93 @@
-## OBJECT POSITION SERVER
+# TART Object Position Server
 
-This is a python server that provides positions of objects that transmit in the L1 band. These are the objects that are visible to the TART telescope. This server can be used to get an expected sky, by requesting the
+REST API providing positions of GNSS satellites and other objects visible to the
+[TART](https://github.com/tmolteno/TART) radio telescope.
 
-and, as an example, the following url (https://tart.elec.ac.nz/catalog/catalog?lat=-45.85&lon=170.54&date=now) will show all the objects above the Dunedin, New Zealand TART.
+Live instance: `https://tart.elec.ac.nz/catalog`
 
-### API Reference
+## Quick start
 
-The API reference generated from the code here is online (https://tart.elec.ac.nz/catalog/doc/index.html)
+```sh
+# Install dependencies
+uv sync
 
-Author: Tim Molteno. tim@elec.ac.nz
+# Run the server
+uv run uvicorn tart_catalogue.main:app --host 0.0.0.0 --port 8876
+```
 
-## Prerequisites
+Open `http://localhost:8876/docs` for the interactive API docs.
 
-A computer with [docker](https://docker.io) installed, and having external web access to software repositories. We have tested these instructions only on Linux-based computers.
+## Docker
 
-## Docker For Object Position Server
+```sh
+docker compose build
+docker compose up -d
+```
 
-The easiest way to build this is to use docker. To build the container type
+The catalogue is served on port 8876 through an nginx reverse proxy.
 
-    docker compose build
+## API Endpoints
 
-To run it (the -d puts it in the background)
+| Endpoint | Method | Description |
+|---|---|---|
+| `/` | GET | Health check |
+| `/catalog` | GET | Visible objects in local horizontal (Az/El) coordinates |
+| `/position` | GET | ECEF positions and velocities for all satellites |
+| `/ephemerides` | GET | Raw TLE data for client-side orbit propagation |
+| `/bulk_az_el` | POST | Bulk Az/El positions for multiple dates |
 
-    docker compose up -d
+### `/catalog`
 
-This creates an instance called 'ops'. You can check the logs using 
+Query the visible sky from a location.
 
-    docker attach ops
+```
+GET /catalog?lat=-45.87&lon=170.60&alt=100&ele=10&date=2026-06-16T12:00:00Z
+```
 
-To exit type Ctrl-p Ctrl-q
+Returns a list of objects with `name`, `el` (elevation°), `az` (azimuth°), `r` (range m), `jy` (flux density).
 
-    
-To kill the instance
+### `/position`
 
-    docker compose down
+ECEF positions for all satellite constellations.
 
-## More accurate Power estimates
+```
+GET /position?date=2026-06-16T12:00:00Z
+```
 
-Steigenberger, Peter, Steffen Thoelert, and Oliver Montenbruck. "GNSS satellite transmit power and its impact on orbit determination." Journal of Geodesy 92.6 (2018): 609-624.
+Returns `name`, `ecef` [x,y,z] in meters, `ecef_dot` [vx,vy,vz] in m/s, `jy`.
 
+### `/ephemerides`
+
+Raw TLE (Two-Line Element) data for client-side SGP4 propagation.
+
+```
+GET /ephemerides?date=2026-06-16T12:00:00Z
+```
+
+Returns `name`, `line1`, `line2` — feed these into any SGP4 library to compute
+positions without further server calls.
+
+## Rust client
+
+A fast Rust binary that calls `/ephemerides` and propagates positions locally:
+
+```sh
+cd rust-client
+cargo run --release
+```
+
+See `rust-client/` for details.
 
 ## Testing
 
-Point your browser to the documentation at http://localhost:8877. You can try the following URL 
+See [TESTING.md](TESTING.md).
 
-    wget -qO- "http://localhost:8876/catalog?lat=-45.85&lon=170.54"
+## Projects
 
-Testing the bulk_az_el endpoint is a bit more complicated because it requires a POST request with JSON data.
-    
-    import requests
-    json_data =  {"lat": 45.5, "lon": 170.5, "alt": 0, "dates": ["2023-12-07T09:25:55.924113", "2023-12-07T09:25:55.924113"]}
-    r = requests.post('http://localhost:8876/bulk_az_el', json=json_data)
-   
-    curl -X POST -H "Content-type: application/json" -d "{\"lat\": 45.5, \"lon\": 170.5, \"alt\": 0, \
-               \"dates\": [\"2023-12-07T09:25:55.924113\", \"2023-12-07T09:25:55.924113\"]}" "localhost:8876/bulk_az_el"
+| Directory | Description |
+|---|---|
+| `tart_catalogue/` | Python FastAPI server |
+| `app_skyfield/` | Skyfield-based satellite catalogue tools |
+| `rust-client/` | Rust CLI client for `/ephemerides` |
+| `nginx/` | Nginx reverse proxy config |
+| `test/` | Integration testbench |

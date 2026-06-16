@@ -4,60 +4,70 @@
 
 ### Unit tests
 
-Run the FastAPI test suite with pytest:
-
 ```sh
 uv run pytest tart_catalogue/ -v
 ```
 
-Tests use FastAPI's `TestClient` and exercise the `/catalog` endpoint without needing
-a running server or network access (TLE data is downloaded from CelesTrak on demand
-by the cache layer).
+Uses FastAPI's `TestClient` — no running server or network needed.
+
+### Integration testbench
+
+Exercises all endpoints against a running server:
+
+```sh
+uv run python test/test_api.py
+```
+
+Or against a remote instance:
+
+```sh
+TART_CATALOGUE_URL=https://tart.elec.ac.nz/catalog uv run python test/test_api.py
+```
+
+Tests cover `/`, `/catalog`, `/catalog` with elevation filter, `/position`,
+`/ephemerides` (single and multiple dates), `/bulk_az_el`, and error cases
+(future dates, bad date strings). Expected output:
+
+```
+Testing against: http://localhost:8876
+
+### /
+  PASS  status 200
+  PASS  has message
+### /catalog
+  PASS  status 200
+  PASS  returns list
+  PASS  satellite has 'name'
+  ...
+==================================================
+Results: N passed, 0 failed out of N
+```
 
 ### Manual endpoint testing
-
-Start the server locally:
 
 ```sh
 uv run uvicorn tart_catalogue.main:app --host 0.0.0.0 --port 8876
 ```
 
-Then hit the endpoints:
-
 ```sh
-# List all visible objects from a given location
 curl "http://localhost:8876/catalog?lat=-45.87&lon=170.6&alt=100&ele=10"
-
-# ECEF positions for all satellites
 curl "http://localhost:8876/position?date=2026-06-16T12:00:00Z"
-
-# Raw TLE data for client-side position calculation
 curl "http://localhost:8876/ephemerides"
+curl -X POST http://localhost:8876/bulk_az_el \
+  -H "Content-Type: application/json" \
+  -d '{"lat":-45.87,"lon":170.6,"alt":100,"dates":["2026-06-16T12:00:00Z"]}'
 ```
 
-Interactive API docs are available at `http://localhost:8876/docs`.
+Interactive docs at `http://localhost:8876/docs`.
 
 ### Docker Compose
-
-Build and run the full stack (catalogue + nginx reverse proxy):
 
 ```sh
 make build   # docker compose build
 make test    # docker compose up --build
 ```
 
-The catalogue will be available on port 8876 via nginx.
-
-### Client API test
-
-A script `test/test_api.py` can be used to test the live API:
-
-```sh
-make test-client   # runs: uv run python3 test/test_api.py
-```
-
-> **Note:** `test/test_api.py` must be created; this target exists in the Makefile
-> for integration testing against a running instance.
+Available on port 8876 via nginx.
 
 ---
 
@@ -70,24 +80,22 @@ cd rust-client
 cargo build --release
 ```
 
-### Run (against production by default)
+### Run against production
 
 ```sh
 cargo run --release
 ```
 
-This fetches TLEs from `https://tart.elec.ac.nz/catalog/ephemerides`, propagates
-positions for now, +6h, +12h, +18h, and +24h, and prints JSON to stdout.
+Fetches TLEs from `https://tart.elec.ac.nz/catalog/ephemerides`, propagates for
+now, +6h, +12h, +18h, +24h, and prints JSON to stdout.
 
-### Run against a local server
+### Run against local server
 
 ```sh
 TART_CATALOGUE_URL=http://localhost:8876 cargo run --release
 ```
 
 ### Expected output
-
-Successful runs print a JSON array to stdout:
 
 ```json
 [
@@ -100,7 +108,7 @@ Successful runs print a JSON array to stdout:
 ]
 ```
 
-Progress and error messages are printed to stderr, so you can pipe stdout:
+Progress and skipped-satellite warnings go to stderr:
 
 ```sh
 cargo run --release 2>/dev/null | jq '.[0]'
@@ -109,7 +117,7 @@ cargo run --release 2>/dev/null | jq '.[0]'
 ### Static checks
 
 ```sh
-cargo check     # fast compile-check, no binary
+cargo check     # fast compile-check
 cargo clippy    # lint
-cargo test      # no tests yet — add with `#[cfg(test)] mod tests { ... }`
+cargo test      # no unit tests yet
 ```
