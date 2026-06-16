@@ -2,8 +2,8 @@ FROM debian:bookworm
 LABEL by Tim Molteno "tim@elec.ac.nz"
 ARG DEBIAN_FRONTEND=noninteractive
 
-# debian setup - python3 is already in bookworm, no extra packages needed
-RUN apt-get update && apt-get clean -y && rm -rf /var/lib/apt/lists/*
+# debian setup - python3 needed by uv to bootstrap
+RUN apt-get update && apt-get install -y python3 && apt-get clean -y && rm -rf /var/lib/apt/lists/*
 
 ENV PYTHONUNBUFFERED=1
 
