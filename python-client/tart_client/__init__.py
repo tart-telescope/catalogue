@@ -24,7 +24,7 @@ iers.conf.auto_download = False
 class CatalogueClient:
     """Client for the TART catalogue ephemerides API."""
 
-    def __init__(self, base_url: str = "http://localhost:8876"):
+    def __init__(self, base_url: str = "https://tart.elec.ac.nz/catalog"):
         self.base_url = base_url.rstrip("/")
 
     def fetch_tles(self, dt: Optional[datetime.datetime] = None) -> List[Dict]:

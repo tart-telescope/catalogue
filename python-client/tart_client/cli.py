@@ -31,7 +31,7 @@ def main():
     parser = argparse.ArgumentParser(description="TART Catalogue client")
     parser.add_argument(
         "--url",
-        default=os.environ.get("TART_CATALOGUE_URL", "http://localhost:8876"),
+        default=os.environ.get("TART_CATALOGUE_URL", "https://tart.elec.ac.nz/catalog"),
         help="Catalogue server URL",
     )
     parser.add_argument(

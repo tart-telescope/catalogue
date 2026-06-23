@@ -18,7 +18,7 @@ cargo run --release
 # Celestial (RA/Dec) positions
 cargo run --release -- celestial
 
-# Custom server
+# Override server (defaults to https://tart.elec.ac.nz/catalog)
 TART_CATALOGUE_URL=http://localhost:8876 cargo run --release
 ```
 

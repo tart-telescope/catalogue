@@ -24,7 +24,7 @@ uv run python -m tart_client.cli ecef \
   --date 2026-06-16T12:00:00Z
 ```
 
-Or set the server URL once:
+Or override the server URL:
 
 ```sh
 export TART_CATALOGUE_URL=http://localhost:8876
@@ -36,7 +36,8 @@ uv run python -m tart_client.cli celestial
 ```python
 from tart_client import CatalogueClient
 
-client = CatalogueClient(base_url="http://localhost:8876")
+client = CatalogueClient()  # defaults to https://tart.elec.ac.nz/catalog
+# Or: CatalogueClient(base_url="http://localhost:8876")
 
 # ECEF positions
 for sat in client.ecef_positions():
