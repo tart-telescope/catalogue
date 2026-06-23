@@ -71,12 +71,12 @@ Available on port 8876 via nginx.
 
 ---
 
-## Rust client (`rust-client/`)
+## Rust client (`tart-catalog-client-rs/`)
 
 ### Build
 
 ```sh
-cd rust-client
+cd tart-catalog-client-rs
 cargo build --release
 ```
 

@@ -72,11 +72,11 @@ positions without further server calls.
 A fast Rust binary that calls `/ephemerides` and propagates positions locally:
 
 ```sh
-cd rust-client
+cd tart-catalog-client-rs
 cargo run --release
 ```
 
-See `rust-client/` for details.
+See `tart-catalog-client-rs/` for details.
 
 ## Testing
 
@@ -88,6 +88,7 @@ See [TESTING.md](TESTING.md).
 |---|---|
 | `tart_catalogue/` | Python FastAPI server |
 | `app_skyfield/` | Skyfield-based satellite catalogue tools |
-| `rust-client/` | Rust CLI client for `/ephemerides` |
+| `tart-catalog-client-py/` | Python CLI/library client |
+| `tart-catalog-client-rs/` | Rust CLI client |
 | `nginx/` | Nginx reverse proxy config |
 | `test/` | Integration testbench |
