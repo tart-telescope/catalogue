@@ -23,5 +23,7 @@ jobs:
         run: uv python install 3.13
       - name: Build
         run: uv build
+        working-directory: tart-catalog-client-py
       - name: Publish
         run: uv publish
+        working-directory: tart-catalog-client-py
