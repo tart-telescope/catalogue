@@ -1,6 +1,6 @@
 [project]
 name = "app-skyfield"
-version = "0.3.0"
+version = "0.3.2"
 description = "Catalog for GNSS objects"
 authors = [
     {name = "Tim Molteno",email = "tim@molteno.net"}
