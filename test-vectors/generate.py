@@ -76,10 +76,48 @@ def compute_vectors(dt):
     }
 
 
+def compute_horizontal(dt, lat, lon, alt_m):
+    """Compute horizontal (Az/El) using astropy for a given observer."""
+    sat = Satrec.twoline2rv(TLE["line1"], TLE["line2"])
+    jd_val, fr = jday(dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second)
+    e, pos, vel = sat.sgp4(jd_val, fr)
+    assert e == 0
+
+    t = time.Time(jd_val, jd_val - jd_val + fr, format="jd", scale="utc")
+    teme = coord.TEME(
+        x=pos[0] * u.km,
+        y=pos[1] * u.km,
+        z=pos[2] * u.km,
+        obstime=t,
+    )
+    itrs = teme.transform_to(coord.ITRS(obstime=t))
+
+    location = coord.EarthLocation.from_geodetic(
+        lon=lon * u.deg,
+        lat=lat * u.deg,
+        height=alt_m * u.m,
+    )
+    altaz = itrs.transform_to(coord.AltAz(obstime=t, location=location))
+
+    return {
+        "azimuth_deg": float(altaz.az.to(u.deg).value),
+        "elevation_deg": float(altaz.alt.to(u.deg).value),
+        "range_km": float(
+            np.sqrt(
+                (itrs.x.to_value(u.km) - location.x.to_value(u.km)) ** 2
+                + (itrs.y.to_value(u.km) - location.y.to_value(u.km)) ** 2
+                + (itrs.z.to_value(u.km) - location.z.to_value(u.km)) ** 2
+            )
+        ),
+    }
+
+
 def main():
     vectors = {
         "tle": TLE,
+        "observer": {"lat_deg": -45.87, "lon_deg": 170.60, "alt_m": 100.0},
         "dates": [],
+        "horizontal": [],
     }
     for offset_h in (0, 6, 12, 24):
         dt = BASE + datetime.timedelta(hours=offset_h)
@@ -89,6 +127,15 @@ def main():
         }
         entry.update(compute_vectors(dt))
         vectors["dates"].append(entry)
+
+        h = compute_horizontal(
+            dt,
+            vectors["observer"]["lat_deg"],
+            vectors["observer"]["lon_deg"],
+            vectors["observer"]["alt_m"],
+        )
+        h["offset_h"] = offset_h
+        vectors["horizontal"].append(h)
 
     OUTPUT.write_text(json.dumps(vectors, indent=2))
     print(f"Wrote {len(vectors['dates'])} test vectors to {OUTPUT}")

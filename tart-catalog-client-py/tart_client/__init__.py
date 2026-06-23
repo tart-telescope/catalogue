@@ -224,6 +224,65 @@ class CatalogueClient:
         """Return the number of satellites available at the given date."""
         return len(self._get_satellites(dt))
 
+    def horizontal_positions(
+        self,
+        lat: float,
+        lon: float,
+        alt: float = 0.0,
+        dt: Optional[datetime.datetime] = None,
+    ) -> List[Dict]:
+        """Return horizontal (Az/El) positions for all satellites.
+
+        Args:
+            lat: Observer latitude in degrees.
+            lon: Observer longitude in degrees.
+            alt: Observer altitude in meters.
+            dt: UTC datetime (default: now).
+
+        Returns list of dicts with: name, azimuth_deg, elevation_deg, range_km.
+        """
+        ecef_list = self.ecef_positions(dt)
+
+        lat_rad = np.radians(lat)
+        lon_rad = np.radians(lon)
+        a = 6378.137
+        f = 1.0 / 298.257223563
+        e2 = 2 * f - f * f
+        sin_lat = np.sin(lat_rad)
+        cos_lat = np.cos(lat_rad)
+        n = a / np.sqrt(1 - e2 * sin_lat * sin_lat)
+        alt_km = alt / 1000.0
+        obs_x = (n + alt_km) * cos_lat * np.cos(lon_rad)
+        obs_y = (n + alt_km) * cos_lat * np.sin(lon_rad)
+        obs_z = (n * (1 - e2) + alt_km) * sin_lat
+
+        results = []
+        for sat in ecef_list:
+            dx = sat["ecef_km"][0] - obs_x
+            dy = sat["ecef_km"][1] - obs_y
+            dz = sat["ecef_km"][2] - obs_z
+
+            sin_lon = np.sin(lon_rad)
+            cos_lon = np.cos(lon_rad)
+            e = -sin_lon * dx + cos_lon * dy
+            n = -sin_lat * cos_lon * dx - sin_lat * sin_lon * dy + cos_lat * dz
+            u = cos_lat * cos_lon * dx + cos_lat * sin_lon * dy + sin_lat * dz
+
+            rng = np.sqrt(e * e + n * n + u * u)
+            az = np.degrees(np.arctan2(e, n)) % 360.0
+            el = np.degrees(np.arcsin(u / rng))
+
+            results.append(
+                {
+                    "name": sat["name"],
+                    "azimuth_deg": round(az, 6),
+                    "elevation_deg": round(el, 6),
+                    "range_km": round(rng, 3),
+                }
+            )
+
+        return results
+
     def celestial_positions(self, dt: Optional[datetime.datetime] = None) -> List[Dict]:
         """Return celestial (ICRS RA/Dec) positions for all satellites.
 

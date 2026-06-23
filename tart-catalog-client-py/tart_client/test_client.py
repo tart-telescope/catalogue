@@ -98,3 +98,32 @@ def test_count_satellites():
         assert client.count_satellites(dt=_parse_date(VECTORS["dates"][0]["date"])) == 2
     finally:
         client.fetch_tles = original_fetch
+
+
+def test_horizontal_vs_test_vectors():
+    """Our horizontal (Az/El) should match astropy AltAz reference."""
+    client = CatalogueClient()
+    original_fetch = client.fetch_tles
+    client.fetch_tles = lambda dt=None: [GPS_TLE]
+    observer = VECTORS["observer"]
+    try:
+        for i, entry in enumerate(VECTORS["horizontal"]):
+            dt = _parse_date(VECTORS["dates"][i]["date"])
+            our = client.horizontal_positions(
+                lat=observer["lat_deg"],
+                lon=observer["lon_deg"],
+                alt=observer["alt_m"],
+                dt=dt,
+            )
+            az_diff = abs(our[0]["azimuth_deg"] - entry["azimuth_deg"])
+            el_diff = abs(our[0]["elevation_deg"] - entry["elevation_deg"])
+            assert az_diff < 0.1, (
+                f"+{entry['offset_h']}h Az: ours={our[0]['azimuth_deg']:.3f}, "
+                f"astropy={entry['azimuth_deg']:.3f}"
+            )
+            assert el_diff < 0.1, (
+                f"+{entry['offset_h']}h El: ours={our[0]['elevation_deg']:.3f}, "
+                f"astropy={entry['elevation_deg']:.3f}"
+            )
+    finally:
+        client.fetch_tles = original_fetch

@@ -44,6 +44,16 @@ struct EcefPosition {
     velocity_km_s: [f64; 3],
 }
 
+/// Horizontal (Az/El) position.
+#[derive(Debug, serde::Serialize)]
+struct HorizontalPosition {
+    name: String,
+    date: String,
+    azimuth_deg: f64,
+    elevation_deg: f64,
+    range_km: f64,
+}
+
 /// Celestial (RA/Dec) position.
 #[derive(Debug, serde::Serialize)]
 struct CelestialPosition {
@@ -369,6 +379,51 @@ impl CatalogueClient {
         Ok(tles.len())
     }
 
+    /// Return horizontal (Az/El) positions for a given observer location.
+    async fn horizontal_positions(
+        &mut self,
+        query_date: &DateTime<Utc>,
+        dates: &[DateTime<Utc>],
+        lat_deg: f64,
+        lon_deg: f64,
+        alt_m: f64,
+    ) -> Result<Vec<HorizontalPosition>, Box<dyn Error>> {
+        let states = self._propagate_ecef(query_date, dates).await?;
+
+        // Observer ECEF (WGS84)
+        let (obs_x, obs_y, obs_z) = geodetic_to_ecef(lat_deg, lon_deg, alt_m);
+
+        Ok(states
+            .into_iter()
+            .map(|s| {
+                let dx = s.position[0] - obs_x;
+                let dy = s.position[1] - obs_y;
+                let dz = s.position[2] - obs_z;
+
+                let lat_rad = lat_deg.to_radians();
+                let lon_rad = lon_deg.to_radians();
+                let (slat, clat) = lat_rad.sin_cos();
+                let (slon, clon) = lon_rad.sin_cos();
+
+                let e = -slon * dx + clon * dy;
+                let n = -slat * clon * dx - slat * slon * dy + clat * dz;
+                let u = clat * clon * dx + clat * slon * dy + slat * dz;
+
+                let rng = (e * e + n * n + u * u).sqrt();
+                let az = e.atan2(n).to_degrees().rem_euclid(360.0);
+                let el = (u / rng).asin().to_degrees();
+
+                HorizontalPosition {
+                    name: s.name,
+                    date: s.date.to_rfc3339(),
+                    azimuth_deg: round(az, 6),
+                    elevation_deg: round(el, 6),
+                    range_km: round(rng, 3),
+                }
+            })
+            .collect())
+    }
+
     /// Return celestial (RA/Dec) positions derived from ECEF.
     async fn celestial_positions(
         &mut self,
@@ -419,6 +474,22 @@ fn rotate_z_sc(v: &[f64; 3], s: f64, c: f64) -> [f64; 3] {
 fn round(x: f64, decimals: u32) -> f64 {
     let scale = 10f64.powi(decimals as i32);
     (x * scale).round() / scale
+}
+
+/// WGS84 geodetic to ECEF (km).
+fn geodetic_to_ecef(lat_deg: f64, lon_deg: f64, alt_m: f64) -> (f64, f64, f64) {
+    let lat = lat_deg.to_radians();
+    let lon = lon_deg.to_radians();
+    let a = 6378.137;
+    let f = 1.0 / 298.257223563;
+    let e2 = 2.0 * f - f * f;
+    let (slat, clat) = lat.sin_cos();
+    let n = a / (1.0 - e2 * slat * slat).sqrt();
+    let alt_km = alt_m / 1000.0;
+    let x = (n + alt_km) * clat * lon.cos();
+    let y = (n + alt_km) * clat * lon.sin();
+    let z = (n * (1.0 - e2) + alt_km) * slat;
+    (x, y, z)
 }
 
 /// Compute the Julian Day for a given UTC datetime.
@@ -623,5 +694,47 @@ mod tests {
         let r_teme = (p.position[0].powi(2) + p.position[1].powi(2) + p.position[2].powi(2)).sqrt();
         let r_ecef = (ecef[0].powi(2) + ecef[1].powi(2) + ecef[2].powi(2)).sqrt();
         assert!((r_teme - r_ecef).abs() < 1.0);
+    }
+
+    #[test]
+    fn test_geodetic_to_ecef() {
+        // Dunedin, NZ: lat=-45.87, lon=170.60, alt=100m
+        let (x, y, z) = geodetic_to_ecef(-45.87, 170.60, 100.0);
+        let r = (x.powi(2) + y.powi(2) + z.powi(2)).sqrt();
+        // Should be roughly Earth radius + 0.1 km
+        assert!(r > 6360.0 && r < 6390.0, "r={}", r);
+        // Southern hemisphere: z should be negative
+        assert!(z < 0.0, "z={}", z);
+    }
+
+    #[test]
+    fn test_horizontal_roundtrip() {
+        let (obs_x, obs_y, obs_z) = geodetic_to_ecef(-45.87, 170.60, 0.0);
+        // Satellite at zenith (directly above observer, 2000 km altitude)
+        let lat_rad = (-45.87f64).to_radians();
+        let lon_rad = 170.60f64.to_radians();
+        let (slat, clat) = lat_rad.sin_cos();
+        let (slon, clon) = lon_rad.sin_cos();
+        // Up unit vector in ECEF
+        let ux = clat * clon;
+        let uy = clat * slon;
+        let uz = slat;
+        let alt_km = 2000.0;
+        let sat_pos = [obs_x + alt_km * ux, obs_y + alt_km * uy, obs_z + alt_km * uz];
+
+        let dx = sat_pos[0] - obs_x;
+        let dy = sat_pos[1] - obs_y;
+        let dz = sat_pos[2] - obs_z;
+
+        let e = -slon * dx + clon * dy;
+        let n = -slat * clon * dx - slat * slon * dy + clat * dz;
+        let u = clat * clon * dx + clat * slon * dy + slat * dz;
+
+        let rng = (e * e + n * n + u * u).sqrt();
+        let _az = e.atan2(n).to_degrees().rem_euclid(360.0);
+        let el = (u / rng).asin().to_degrees();
+
+        assert!((el - 90.0).abs() < 0.1, "el={}", el);
+        assert!((rng - 2000.0).abs() < 1.0, "rng={}", rng);
     }
 }
