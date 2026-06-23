@@ -56,7 +56,7 @@ mod cache {
     use std::time::SystemTime;
 
     const MAX_ENTRIES: usize = 100;
-    const STALE_SECS: u64 = 12 * 3600;
+    const MAX_DELTA_HOURS: f64 = 12.0;
 
     fn cache_dir() -> PathBuf {
         let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
@@ -68,8 +68,35 @@ mod cache {
         format!("{:04}-{:02}-{:02}T{:02}", dt.year(), dt.month(), dt.day(), dt.hour())
     }
 
-    fn cache_path(dt: &DateTime<Utc>) -> PathBuf {
-        cache_dir().join(format!("{}.json", cache_key(dt)))
+    /// Parse a cache filename like '2026-06-16T13.json' into hours since epoch.
+    fn parse_cache_hours(name: &str) -> Option<f64> {
+        let stem = name.strip_suffix(".json")?;
+        // Format: YYYY-MM-DDTHH
+        let parts: Vec<&str> = stem.split('T').collect();
+        if parts.len() != 2 {
+            return None;
+        }
+        let date_parts: Vec<&str> = parts[0].split('-').collect();
+        if date_parts.len() != 3 {
+            return None;
+        }
+        let year: i32 = date_parts[0].parse().ok()?;
+        let month: u32 = date_parts[1].parse().ok()?;
+        let day: u32 = date_parts[2].parse().ok()?;
+        let hour: u32 = parts[1].parse().ok()?;
+        // Approximate: days since year 0 + hours
+        let days = (year as f64 - 1.0) * 365.25 + (month as f64 - 1.0) * 30.44 + day as f64;
+        Some(days * 24.0 + hour as f64)
+    }
+
+    /// Convert DateTime<Utc> to approximate hours since year 0.
+    fn datetime_to_hours(dt: &DateTime<Utc>) -> f64 {
+        let days = (dt.year() as f64 - 1.0) * 365.25
+            + (dt.month() as f64 - 1.0) * 30.44
+            + dt.day() as f64
+            + dt.hour() as f64 / 24.0
+            + dt.minute() as f64 / 1440.0;
+        days * 24.0
     }
 
     /// Remove least recently used cache files if over the limit.
@@ -94,23 +121,40 @@ mod cache {
         }
     }
 
-    /// Load cached TLE records if fresh, returning None if missing or stale.
+    /// Find the nearest cached TLE within 12 hours of dt, or None.
     pub fn load(dt: &DateTime<Utc>) -> Option<Vec<TleRecord>> {
-        let path = cache_path(dt);
-        if !path.exists() {
+        let dir = cache_dir();
+        if !dir.exists() {
             return None;
         }
-        let meta = path.metadata().ok()?;
-        let age = SystemTime::now()
-            .duration_since(meta.modified().ok()?)
-            .ok()?
-            .as_secs();
-        if age > STALE_SECS {
-            let _ = fs::remove_file(&path);
+        let target_hours = datetime_to_hours(dt);
+        let mut best_path: Option<PathBuf> = None;
+        let mut best_delta: f64 = f64::MAX;
+
+        let entries = match fs::read_dir(&dir) {
+            Ok(e) => e,
+            Err(_) => return None,
+        };
+
+        for entry in entries.filter_map(|e| e.ok()) {
+            let path = entry.path();
+            let name = path.file_name()?.to_str()?;
+            let cache_hours = parse_cache_hours(name)?;
+            let delta = (target_hours - cache_hours).abs();
+            if delta < best_delta {
+                best_delta = delta;
+                best_path = Some(path);
+            }
+        }
+
+        let path = best_path?;
+        if best_delta > MAX_DELTA_HOURS {
             return None;
         }
+
         // Touch to update LRU
-        let _ = fs::File::open(&path).and_then(|f| f.set_times(fs::FileTimes::new().set_modified(std::time::SystemTime::now())));
+        let _ = fs::File::open(&path)
+            .and_then(|f| f.set_times(fs::FileTimes::new().set_modified(SystemTime::now())));
         let raw = fs::read_to_string(&path).ok()?;
         serde_json::from_str(&raw).ok()
     }
@@ -119,7 +163,7 @@ mod cache {
     pub fn save(dt: &DateTime<Utc>, records: &[TleRecord]) {
         let dir = cache_dir();
         let _ = fs::create_dir_all(&dir);
-        let path = cache_path(dt);
+        let path = dir.join(format!("{}.json", cache_key(dt)));
         if let Ok(json) = serde_json::to_string(records) {
             let _ = fs::write(&path, json);
         }

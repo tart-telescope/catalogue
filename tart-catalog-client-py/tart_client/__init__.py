@@ -13,7 +13,6 @@ import datetime
 import json
 import os
 import pathlib
-import time as _time
 from typing import Dict, List, Optional
 
 import numpy as np
@@ -28,17 +27,12 @@ iers.conf.auto_download = False
 
 CACHE_DIR = pathlib.Path.home() / ".cache" / "tart-catalogue"
 MAX_CACHE_ENTRIES = 100
-STALE_SECONDS = 12 * 3600  # 12 hours
 
 
 def _cache_key(dt: datetime.datetime) -> str:
     """Round datetime to the nearest hour for a stable cache key."""
     rounded = dt.replace(minute=0, second=0, microsecond=0)
     return rounded.strftime("%Y-%m-%dT%H")
-
-
-def _cache_path(dt: datetime.datetime) -> pathlib.Path:
-    return CACHE_DIR / f"{_cache_key(dt)}.json"
 
 
 def _evict_lru() -> None:
@@ -49,22 +43,45 @@ def _evict_lru() -> None:
         oldest.unlink(missing_ok=True)
 
 
+def _parse_cache_timestamp(filename: str) -> Optional[datetime.datetime]:
+    """Parse a cache filename like '2026-06-16T13.json' into a datetime."""
+    stem = filename.replace(".json", "")
+    try:
+        return datetime.datetime.strptime(stem, "%Y-%m-%dT%H").replace(
+            tzinfo=datetime.timezone.utc
+        )
+    except ValueError:
+        return None
+
+
 def _load_cache(dt: datetime.datetime) -> Optional[List[Dict]]:
-    path = _cache_path(dt)
-    if not path.exists():
+    """Find the nearest cached TLE within 12 hours of dt, or None."""
+    if not CACHE_DIR.exists():
         return None
-    age = _time.time() - path.stat().st_mtime
-    if age > STALE_SECONDS:
-        path.unlink(missing_ok=True)
+
+    best_path = None
+    best_delta = datetime.timedelta.max
+
+    for f in CACHE_DIR.glob("*.json"):
+        ts = _parse_cache_timestamp(f.name)
+        if ts is None:
+            continue
+        delta = abs(dt - ts)
+        if delta < best_delta:
+            best_delta = delta
+            best_path = f
+
+    if best_path is None or best_delta > datetime.timedelta(hours=12):
         return None
+
     # Touch the file to update LRU order
-    path.touch()
-    return json.loads(path.read_text())
+    best_path.touch()
+    return json.loads(best_path.read_text())
 
 
 def _save_cache(dt: datetime.datetime, records: List[Dict]) -> None:
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    path = _cache_path(dt)
+    path = CACHE_DIR / f"{_cache_key(dt)}.json"
     path.write_text(json.dumps(records))
     _evict_lru()
 
