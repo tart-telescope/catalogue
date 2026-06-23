@@ -19,7 +19,16 @@ struct TemeState {
     velocity: [f64; 3],
 }
 
-/// ECEF position and velocity.
+/// Raw ECEF position with datetime for further transforms.
+#[derive(Debug)]
+struct EcefState {
+    name: String,
+    date: DateTime<Utc>,
+    position: [f64; 3],
+    velocity: [f64; 3],
+}
+
+/// ECEF position and velocity (serializable).
 #[derive(Debug, serde::Serialize)]
 struct EcefPosition {
     name: String,
@@ -66,10 +75,7 @@ impl CatalogueClient {
     }
 
     /// Propagate all TLEs to a list of dates, returning TEME states.
-    fn propagate_tles(
-        tles: &[TleRecord],
-        dates: &[DateTime<Utc>],
-    ) -> Vec<TemeState> {
+    fn propagate_tles(tles: &[TleRecord], dates: &[DateTime<Utc>]) -> Vec<TemeState> {
         let mut results = Vec::new();
         let mut skipped = 0u32;
 
@@ -132,49 +138,78 @@ impl CatalogueClient {
         results
     }
 
-    /// Compute ECEF positions for a list of dates.
-    async fn ecef_positions(
-        &self,
-        query_date: &DateTime<Utc>,
-        dates: &[DateTime<Utc>],
-    ) -> Result<Vec<EcefPosition>, Box<dyn Error>> {
-        let tles = self.fetch_tles(query_date).await?;
-        eprintln!("Fetched {} TLE records", tles.len());
-        let teme_states = Self::propagate_tles(&tles, dates);
-
-        Ok(teme_states
+    /// Convert TEME states to ECEF states.
+    fn teme_to_ecef(teme_states: Vec<TemeState>) -> Vec<EcefState> {
+        teme_states
             .into_iter()
             .map(|s| {
                 let gmst_rad = gmst(&s.date).to_radians();
                 let ecef = rotate_z(&s.position, -gmst_rad);
                 let vel = rotate_z(&s.velocity, -gmst_rad);
-                EcefPosition {
+                EcefState {
                     name: s.name,
-                    date: s.date.to_rfc3339(),
-                    ecef_km: [round(ecef[0], 6), round(ecef[1], 6), round(ecef[2], 6)],
-                    velocity_km_s: [round(vel[0], 6), round(vel[1], 6), round(vel[2], 6)],
+                    date: s.date,
+                    position: ecef,
+                    velocity: vel,
                 }
+            })
+            .collect()
+    }
+
+    /// Compute ECEF positions for a list of dates (primary computation).
+    async fn _propagate_ecef(
+        &self,
+        query_date: &DateTime<Utc>,
+        dates: &[DateTime<Utc>],
+    ) -> Result<Vec<EcefState>, Box<dyn Error>> {
+        let tles = self.fetch_tles(query_date).await?;
+        eprintln!("Fetched {} TLE records", tles.len());
+        let teme_states = Self::propagate_tles(&tles, dates);
+        Ok(Self::teme_to_ecef(teme_states))
+    }
+
+    /// Return ECEF positions (km) and velocities (km/s) for all satellites.
+    async fn ecef_positions(
+        &self,
+        query_date: &DateTime<Utc>,
+        dates: &[DateTime<Utc>],
+    ) -> Result<Vec<EcefPosition>, Box<dyn Error>> {
+        let states = self._propagate_ecef(query_date, dates).await?;
+        Ok(states
+            .into_iter()
+            .map(|s| EcefPosition {
+                name: s.name,
+                date: s.date.to_rfc3339(),
+                ecef_km: [
+                    round(s.position[0], 6),
+                    round(s.position[1], 6),
+                    round(s.position[2], 6),
+                ],
+                velocity_km_s: [
+                    round(s.velocity[0], 6),
+                    round(s.velocity[1], 6),
+                    round(s.velocity[2], 6),
+                ],
             })
             .collect())
     }
 
-    /// Compute celestial (RA/Dec) positions for a list of dates.
+    /// Return celestial (RA/Dec) positions derived from ECEF.
     async fn celestial_positions(
         &self,
         query_date: &DateTime<Utc>,
         dates: &[DateTime<Utc>],
     ) -> Result<Vec<CelestialPosition>, Box<dyn Error>> {
-        let tles = self.fetch_tles(query_date).await?;
-        eprintln!("Fetched {} TLE records", tles.len());
-        let teme_states = Self::propagate_tles(&tles, dates);
-
-        Ok(teme_states
+        let states = self._propagate_ecef(query_date, dates).await?;
+        Ok(states
             .into_iter()
             .map(|s| {
-                let p = s.position;
-                let r = (p[0] * p[0] + p[1] * p[1] + p[2] * p[2]).sqrt();
-                let ra = p[1].atan2(p[0]); // radians
-                let dec = (p[2] / r).asin(); // radians
+                let gmst_rad = gmst(&s.date).to_radians();
+                // ECEF -> inertial by reversing the Earth rotation
+                let inertial = rotate_z(&s.position, gmst_rad);
+                let r = (inertial[0].powi(2) + inertial[1].powi(2) + inertial[2].powi(2)).sqrt();
+                let ra = inertial[1].atan2(inertial[0]);
+                let dec = (inertial[2] / r).asin();
                 CelestialPosition {
                     name: s.name,
                     date: s.date.to_rfc3339(),
@@ -197,11 +232,7 @@ impl CatalogueClient {
 /// Rotate a 3-vector around the Z axis by `angle` radians.
 fn rotate_z(v: &[f64; 3], angle: f64) -> [f64; 3] {
     let (s, c) = angle.sin_cos();
-    [
-        v[0] * c - v[1] * s,
-        v[0] * s + v[1] * c,
-        v[2],
-    ]
+    [v[0] * c - v[1] * s, v[0] * s + v[1] * c, v[2]]
 }
 
 fn round(x: f64, decimals: u32) -> f64 {
@@ -233,20 +264,17 @@ fn julian_day(dt: &DateTime<Utc>) -> f64 {
 /// Greenwich Mean Sidereal Time in degrees for a UTC datetime.
 fn gmst(dt: &DateTime<Utc>) -> f64 {
     let jd = julian_day(dt);
-    let jd0 = (jd + 0.5).floor() - 0.5; // JD at 0h UT
+    let jd0 = (jd + 0.5).floor() - 0.5;
     let t = (jd0 - 2451545.0) / 36525.0;
 
-    // GMST at 0h UT (USNO formula, degrees)
     let gmst0 = 100.46061837
         + 36000.770053608 * t
         + 0.000387933 * t * t
         - (t * t * t) / 38710000.0;
 
-    // Add fraction of day
     let frac_day = jd - jd0;
     let gmst_deg = gmst0 + 360.98564736629 * frac_day;
 
-    // Normalize to [0, 360)
     gmst_deg.rem_euclid(360.0)
 }
 
@@ -265,7 +293,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let client = CatalogueClient::new(&base_url);
 
-    // Parse subcommand from first positional arg
     let args: Vec<String> = std::env::args().collect();
     let cmd = args.get(1).map(|s| s.as_str()).unwrap_or("ecef");
 
