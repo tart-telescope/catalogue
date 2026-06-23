@@ -1,9 +1,11 @@
 use chrono::{DateTime, Datelike, Timelike, Utc};
 use sgp4::{Constants, Elements, MinutesSinceEpoch};
 use std::error::Error;
+use std::fs;
+use std::path::PathBuf;
 
 /// A TLE record as returned by the /ephemerides endpoint.
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
 struct TleRecord {
     name: String,
     line1: String,
@@ -47,6 +49,83 @@ struct CelestialPosition {
     distance_km: f64,
 }
 
+/// Local cache of ephemerides in ~/.cache/tart-catalogue/
+mod cache {
+    use super::*;
+    use std::time::SystemTime;
+
+    const MAX_ENTRIES: usize = 100;
+    const STALE_SECS: u64 = 12 * 3600;
+
+    fn cache_dir() -> PathBuf {
+        let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+        PathBuf::from(home).join(".cache").join("tart-catalogue")
+    }
+
+    /// Round datetime to the nearest hour for a stable cache key.
+    fn cache_key(dt: &DateTime<Utc>) -> String {
+        format!("{:04}-{:02}-{:02}T{:02}", dt.year(), dt.month(), dt.day(), dt.hour())
+    }
+
+    fn cache_path(dt: &DateTime<Utc>) -> PathBuf {
+        cache_dir().join(format!("{}.json", cache_key(dt)))
+    }
+
+    /// Remove least recently used cache files if over the limit.
+    fn evict_lru() {
+        let dir = cache_dir();
+        if !dir.exists() {
+            return;
+        }
+        let mut files: Vec<_> = match fs::read_dir(&dir) {
+            Ok(entries) => entries
+                .filter_map(|e| e.ok())
+                .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
+                .collect(),
+            Err(_) => return,
+        };
+        if files.len() <= MAX_ENTRIES {
+            return;
+        }
+        files.sort_by_key(|e| e.metadata().ok().and_then(|m| m.modified().ok()));
+        for entry in files.iter().take(files.len() - MAX_ENTRIES) {
+            let _ = fs::remove_file(entry.path());
+        }
+    }
+
+    /// Load cached TLE records if fresh, returning None if missing or stale.
+    pub fn load(dt: &DateTime<Utc>) -> Option<Vec<TleRecord>> {
+        let path = cache_path(dt);
+        if !path.exists() {
+            return None;
+        }
+        let meta = path.metadata().ok()?;
+        let age = SystemTime::now()
+            .duration_since(meta.modified().ok()?)
+            .ok()?
+            .as_secs();
+        if age > STALE_SECS {
+            let _ = fs::remove_file(&path);
+            return None;
+        }
+        // Touch to update LRU
+        let _ = fs::File::open(&path).and_then(|f| f.set_times(fs::FileTimes::new().set_modified(std::time::SystemTime::now())));
+        let raw = fs::read_to_string(&path).ok()?;
+        serde_json::from_str(&raw).ok()
+    }
+
+    /// Save TLE records to the cache, evicting LRU if needed.
+    pub fn save(dt: &DateTime<Utc>, records: &[TleRecord]) {
+        let dir = cache_dir();
+        let _ = fs::create_dir_all(&dir);
+        let path = cache_path(dt);
+        if let Ok(json) = serde_json::to_string(records) {
+            let _ = fs::write(&path, json);
+        }
+        evict_lru();
+    }
+}
+
 /// Configuration for the catalogue client.
 struct CatalogueClient {
     base_url: String,
@@ -59,11 +138,16 @@ impl CatalogueClient {
         }
     }
 
-    /// Fetch raw TLE data from the /ephemerides endpoint.
+    /// Fetch raw TLE data from the /ephemerides endpoint, with local caching.
     async fn fetch_tles(
         &self,
         date: &DateTime<Utc>,
     ) -> Result<Vec<TleRecord>, Box<dyn Error>> {
+        if let Some(cached) = cache::load(date) {
+            eprintln!("Using cached TLEs for {}", date.format("%Y-%m-%dT%H"));
+            return Ok(cached);
+        }
+
         let url = format!(
             "{}/ephemerides?date={}",
             self.base_url,
@@ -71,6 +155,9 @@ impl CatalogueClient {
         );
         let response = reqwest::get(&url).await?;
         let records: Vec<TleRecord> = response.json().await?;
+
+        cache::save(date, &records);
+        eprintln!("Fetched {} TLE records (cached)", records.len());
         Ok(records)
     }
 
@@ -163,7 +250,6 @@ impl CatalogueClient {
         dates: &[DateTime<Utc>],
     ) -> Result<Vec<EcefState>, Box<dyn Error>> {
         let tles = self.fetch_tles(query_date).await?;
-        eprintln!("Fetched {} TLE records", tles.len());
         let teme_states = Self::propagate_tles(&tles, dates);
         Ok(Self::teme_to_ecef(teme_states))
     }
@@ -205,7 +291,6 @@ impl CatalogueClient {
             .into_iter()
             .map(|s| {
                 let gmst_rad = gmst(&s.date).to_radians();
-                // ECEF -> inertial by reversing the Earth rotation
                 let inertial = rotate_z(&s.position, gmst_rad);
                 let r = (inertial[0].powi(2) + inertial[1].powi(2) + inertial[2].powi(2)).sqrt();
                 let ra = inertial[1].atan2(inertial[0]);

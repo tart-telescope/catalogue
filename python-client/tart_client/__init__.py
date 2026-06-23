@@ -4,9 +4,16 @@ TART Catalogue Python client.
 Fetches TLE data from the /ephemerides endpoint and computes satellite
 positions in ECEF (Earth-Centered Earth-Fixed) or celestial (RA/Dec)
 coordinates. Celestial positions are derived from the ECEF positions.
+
+Caches ephemerides locally in ~/.cache/tart-catalogue/ with a 12-hour
+freshness window and LRU eviction at 100 entries.
 """
 
 import datetime
+import json
+import os
+import pathlib
+import time as _time
 from typing import Dict, List, Optional
 
 import numpy as np
@@ -17,8 +24,49 @@ from astropy import units as u
 from astropy.utils import iers
 from sgp4.api import Satrec, jday
 
-# Disable IERS download to avoid network dependency at import time
 iers.conf.auto_download = False
+
+CACHE_DIR = pathlib.Path.home() / ".cache" / "tart-catalogue"
+MAX_CACHE_ENTRIES = 100
+STALE_SECONDS = 12 * 3600  # 12 hours
+
+
+def _cache_key(dt: datetime.datetime) -> str:
+    """Round datetime to the nearest hour for a stable cache key."""
+    rounded = dt.replace(minute=0, second=0, microsecond=0)
+    return rounded.strftime("%Y-%m-%dT%H")
+
+
+def _cache_path(dt: datetime.datetime) -> pathlib.Path:
+    return CACHE_DIR / f"{_cache_key(dt)}.json"
+
+
+def _evict_lru() -> None:
+    """Remove least recently used cache files if over the limit."""
+    files = sorted(CACHE_DIR.glob("*.json"), key=lambda f: f.stat().st_mtime)
+    while len(files) > MAX_CACHE_ENTRIES:
+        oldest = files.pop(0)
+        oldest.unlink(missing_ok=True)
+
+
+def _load_cache(dt: datetime.datetime) -> Optional[List[Dict]]:
+    path = _cache_path(dt)
+    if not path.exists():
+        return None
+    age = _time.time() - path.stat().st_mtime
+    if age > STALE_SECONDS:
+        path.unlink(missing_ok=True)
+        return None
+    # Touch the file to update LRU order
+    path.touch()
+    return json.loads(path.read_text())
+
+
+def _save_cache(dt: datetime.datetime, records: List[Dict]) -> None:
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    path = _cache_path(dt)
+    path.write_text(json.dumps(records))
+    _evict_lru()
 
 
 class CatalogueClient:
@@ -28,23 +76,27 @@ class CatalogueClient:
         self.base_url = base_url.rstrip("/")
 
     def fetch_tles(self, dt: Optional[datetime.datetime] = None) -> List[Dict]:
-        """Fetch raw TLE records from the server."""
-        url = f"{self.base_url}/ephemerides"
-        params = {}
-        if dt is not None:
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=datetime.timezone.utc)
-            params["date"] = dt.isoformat()
+        """Fetch raw TLE records from the server, with local caching."""
+        if dt is None:
+            dt = datetime.datetime.now(datetime.timezone.utc)
+        elif dt.tzinfo is None:
+            dt = dt.replace(tzinfo=datetime.timezone.utc)
 
+        cached = _load_cache(dt)
+        if cached is not None:
+            return cached
+
+        url = f"{self.base_url}/ephemerides"
+        params = {"date": dt.isoformat()}
         resp = requests.get(url, params=params, timeout=30)
         resp.raise_for_status()
-        return resp.json()
+        records = resp.json()
+
+        _save_cache(dt, records)
+        return records
 
     def _propagate_ecef(self, dt: datetime.datetime) -> List[dict]:
-        """Propagate TLEs and return ECEF positions as dicts (internal).
-
-        Each dict has keys: name, ecef_km [x,y,z], velocity_km_s [vx,vy,vz].
-        """
+        """Propagate TLEs and return ECEF positions as dicts (internal)."""
         tles = self.fetch_tles(dt)
 
         jd, fr = jday(dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second)
@@ -57,8 +109,6 @@ class CatalogueClient:
             if e != 0:
                 continue
 
-            # SGP4 returns TEME in km, km/s.
-            # Convert TEME -> ITRS (ECEF) using astropy.
             teme = coord.TEME(
                 x=pos[0] * u.km,
                 y=pos[1] * u.km,
@@ -89,10 +139,7 @@ class CatalogueClient:
         return results
 
     def ecef_positions(self, dt: Optional[datetime.datetime] = None) -> List[Dict]:
-        """Return ECEF positions (km) and velocities (km/s) for all satellites.
-
-        Returns a list of dicts with keys: name, ecef_km [x,y,z], velocity_km_s [vx,vy,vz].
-        """
+        """Return ECEF positions (km) and velocities (km/s) for all satellites."""
         if dt is None:
             dt = datetime.datetime.now(datetime.timezone.utc)
         elif dt.tzinfo is None:
@@ -102,8 +149,7 @@ class CatalogueClient:
     def celestial_positions(self, dt: Optional[datetime.datetime] = None) -> List[Dict]:
         """Return celestial (ICRS RA/Dec) positions for all satellites.
 
-        Computed from ECEF positions. Returns a list of dicts with keys:
-        name, ra_hours, dec_degrees, distance_km.
+        Computed from ECEF positions.
         """
         ecef_list = self.ecef_positions(dt)
 
@@ -112,7 +158,6 @@ class CatalogueClient:
             p = sat["ecef_km"]
             r = np.sqrt(p[0] ** 2 + p[1] ** 2 + p[2] ** 2)
 
-            # Convert ECEF → ITRS → ICRS using astropy
             if dt is None:
                 dt = datetime.datetime.now(datetime.timezone.utc)
             elif dt.tzinfo is None:
