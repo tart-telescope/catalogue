@@ -1,4 +1,4 @@
-name: Publish spotless package
+name: Publish tart-catalogue-client package
 
 on:
   push:
