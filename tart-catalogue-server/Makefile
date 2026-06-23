@@ -2,9 +2,9 @@
 .PHONY: build test test-client lint
 
 build:
-	DOCKER_BUILDKIT=1 docker compose -f tart-catalogue-server/compose.yml build
+	DOCKER_BUILDKIT=1 docker compose build
 test:
-	docker compose -f tart-catalogue-server/compose.yml up --build
+	docker compose up --build
 
 test-client:
 	python3 test/test_api.py

@@ -108,4 +108,4 @@ See [TESTING.md](TESTING.md) for full instructions.
 | `tart-catalog-client-rs/` | Rust client library + CLI |
 | `app_skyfield/` | Skyfield-based satellite catalogue tools |
 | `test-vectors/` | Astropy-generated reference data for tests |
-| `nginx/` | Nginx reverse proxy config |
+| `tart-catalogue-server/nginx/` | Nginx reverse proxy config |
