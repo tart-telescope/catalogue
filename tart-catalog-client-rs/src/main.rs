@@ -286,6 +286,15 @@ impl CatalogueClient {
             .collect())
     }
 
+    /// Return the number of satellites available at the given date.
+    async fn count_satellites(
+        &self,
+        query_date: &DateTime<Utc>,
+    ) -> Result<usize, Box<dyn Error>> {
+        let states = self._propagate_ecef(query_date, &[*query_date]).await?;
+        Ok(states.len())
+    }
+
     /// Return celestial (RA/Dec) positions derived from ECEF.
     async fn celestial_positions(
         &self,
@@ -417,8 +426,7 @@ async fn run_benchmark(client: &CatalogueClient) -> Result<(), Box<dyn Error>> {
     let mut total_positions = 0usize;
     for i in 0..N {
         let dt = week_ago + step * i as i32;
-        let positions = client.celestial_positions(&dt, &[dt]).await?;
-        total_positions += positions.len();
+        total_positions += client.count_satellites(&dt).await?;
     }
     let elapsed = start.elapsed();
     let secs = elapsed.as_secs_f64();

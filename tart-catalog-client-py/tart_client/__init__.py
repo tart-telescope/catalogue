@@ -146,6 +146,10 @@ class CatalogueClient:
             dt = dt.replace(tzinfo=datetime.timezone.utc)
         return self._propagate_ecef(dt)
 
+    def count_satellites(self, dt: Optional[datetime.datetime] = None) -> int:
+        """Return the number of satellites available at the given date."""
+        return len(self.ecef_positions(dt))
+
     def celestial_positions(self, dt: Optional[datetime.datetime] = None) -> List[Dict]:
         """Return celestial (ICRS RA/Dec) positions for all satellites.
 

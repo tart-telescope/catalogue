@@ -42,8 +42,7 @@ def cmd_benchmark(args):
     total_positions = 0
     for i in range(N):
         dt = week_ago + step * i
-        results = client.celestial_positions(dt=dt)
-        total_positions += len(results)
+        total_positions += client.count_satellites(dt=dt)
     elapsed = time.perf_counter() - t0
 
     from tart_client import CACHE_DIR
