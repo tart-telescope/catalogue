@@ -51,7 +51,7 @@ impl CatalogueClient {
     }
 
     /// Fetch raw TLE data from the /ephemerides endpoint.
-    async fn fetch_ephemerides(
+    async fn fetch_tles(
         &self,
         date: &DateTime<Utc>,
     ) -> Result<Vec<TleRecord>, Box<dyn Error>> {
@@ -138,7 +138,7 @@ impl CatalogueClient {
         query_date: &DateTime<Utc>,
         dates: &[DateTime<Utc>],
     ) -> Result<Vec<EcefPosition>, Box<dyn Error>> {
-        let tles = self.fetch_ephemerides(query_date).await?;
+        let tles = self.fetch_tles(query_date).await?;
         eprintln!("Fetched {} TLE records", tles.len());
         let teme_states = Self::propagate_tles(&tles, dates);
 
@@ -164,7 +164,7 @@ impl CatalogueClient {
         query_date: &DateTime<Utc>,
         dates: &[DateTime<Utc>],
     ) -> Result<Vec<CelestialPosition>, Box<dyn Error>> {
-        let tles = self.fetch_ephemerides(query_date).await?;
+        let tles = self.fetch_tles(query_date).await?;
         eprintln!("Fetched {} TLE records", tles.len());
         let teme_states = Self::propagate_tles(&tles, dates);
 
