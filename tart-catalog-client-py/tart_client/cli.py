@@ -38,9 +38,6 @@ def cmd_benchmark(args):
     week_ago = now - datetime.timedelta(days=7)
     step = (now - week_ago) / N
 
-    print(f"Benchmark: {N} celestial position queries over the last week")
-    print(f"Server: {client.base_url}")
-
     t0 = time.perf_counter()
     total_positions = 0
     for i in range(N):
@@ -49,11 +46,20 @@ def cmd_benchmark(args):
         total_positions += len(results)
     elapsed = time.perf_counter() - t0
 
-    print(f"Total time:       {elapsed:.2f} s")
-    print(f"Positions:        {total_positions}")
-    print(f"Positions/sec:    {total_positions / elapsed:,.0f}")
-    print(f"Queries/sec:      {N / elapsed:,.1f}")
-    print(f"Avg query time:   {elapsed / N * 1000:.1f} ms")
+    print(
+        json.dumps(
+            {
+                "server": client.base_url,
+                "queries": N,
+                "total_positions": total_positions,
+                "elapsed_s": round(elapsed, 2),
+                "positions_per_sec": round(total_positions / elapsed),
+                "queries_per_sec": round(N / elapsed, 1),
+                "avg_query_ms": round(elapsed / N * 1000, 1),
+            },
+            indent=2,
+        )
+    )
 
 
 def main():

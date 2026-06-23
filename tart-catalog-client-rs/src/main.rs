@@ -408,9 +408,6 @@ async fn run_benchmark(client: &CatalogueClient) -> Result<(), Box<dyn Error>> {
     let week_ago = now - chrono::Duration::days(7);
     let step = (now - week_ago) / N as i32;
 
-    eprintln!("Benchmark: {} celestial position queries over the last week", N);
-    eprintln!("Server: {}", client.base_url);
-
     let start = Instant::now();
     let mut total_positions = 0usize;
     for i in 0..N {
@@ -419,13 +416,18 @@ async fn run_benchmark(client: &CatalogueClient) -> Result<(), Box<dyn Error>> {
         total_positions += positions.len();
     }
     let elapsed = start.elapsed();
-
     let secs = elapsed.as_secs_f64();
-    eprintln!("Total time:       {:.2} s", secs);
-    eprintln!("Positions:        {}", total_positions);
-    eprintln!("Positions/sec:    {:.0}", total_positions as f64 / secs);
-    eprintln!("Queries/sec:      {:.1}", N as f64 / secs);
-    eprintln!("Avg query time:   {:.1} ms", secs / N as f64 * 1000.0);
+
+    let result = serde_json::json!({
+        "server": client.base_url,
+        "queries": N,
+        "total_positions": total_positions,
+        "elapsed_s": (secs * 100.0).round() / 100.0,
+        "positions_per_sec": (total_positions as f64 / secs).round() as u64,
+        "queries_per_sec": ((N as f64 / secs) * 10.0).round() / 10.0,
+        "avg_query_ms": ((secs / N as f64 * 1000.0) * 10.0).round() / 10.0,
+    });
+    println!("{}", serde_json::to_string_pretty(&result)?);
 
     Ok(())
 }
