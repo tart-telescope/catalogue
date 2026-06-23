@@ -1,7 +1,7 @@
 # TART Catalogue Python Client
 
 Fetches TLE data from the catalogue server and computes satellite positions
-in ECEF or celestial (RA/Dec) coordinates.
+in ECEF, celestial (RA/Dec), or horizontal (Az/El) coordinates.
 
 ## Setup
 
@@ -9,7 +9,7 @@ in ECEF or celestial (RA/Dec) coordinates.
 uv sync
 ```
 
-## Usage
+## CLI Usage
 
 ```sh
 # ECEF positions (default)
@@ -22,35 +22,41 @@ uv run python -m tart_client.cli celestial
 uv run python -m tart_client.cli ecef \
   --url http://localhost:8876 \
   --date 2026-06-16T12:00:00Z
+
+# Benchmark (default 1000 queries over last week)
+uv run python -m tart_client.cli benchmark 5000
 ```
 
-Or override the server URL:
+Set `TART_CATALOGUE_URL` to avoid repeating `--url`:
 
 ```sh
 export TART_CATALOGUE_URL=http://localhost:8876
 uv run python -m tart_client.cli celestial
 ```
 
-## Library use
+## Library API
 
 ```python
 from tart_client import CatalogueClient
 
 client = CatalogueClient()  # defaults to https://tart.elec.ac.nz/catalog
 # Or: CatalogueClient(base_url="http://localhost:8876")
-
-# ECEF positions
-for sat in client.ecef_positions():
-    print(sat["name"], sat["ecef_km"])
-
-# Celestial positions
-for sat in client.celestial_positions():
-    print(sat["name"], sat["ra_hours"], sat["dec_degrees"])
 ```
 
-## Output
+### Fetch raw TLEs
 
-### ECEF
+```python
+tles = client.fetch_tles()
+# Returns: [{"name": "...", "line1": "...", "line2": "..."}, ...]
+```
+
+### ECEF positions
+
+```python
+positions = client.ecef_positions()
+```
+
+Returns Earth-Centered Earth-Fixed coordinates:
 
 ```json
 [
@@ -62,7 +68,15 @@ for sat in client.celestial_positions():
 ]
 ```
 
-### Celestial
+Transform: SGP4 → TEME → rotate by −GMST → ECEF.
+
+### Celestial positions (RA/Dec)
+
+```python
+positions = client.celestial_positions()
+```
+
+Derived from ECEF. Returns ICRS right ascension and declination:
 
 ```json
 [
@@ -75,8 +89,61 @@ for sat in client.celestial_positions():
 ]
 ```
 
-## How it works
+Transform: ECEF → ITRS → ICRS (via astropy).
 
-1. **Fetch** — GET `/ephemerides` returns raw TLE (name, line1, line2)
-2. **Propagate** — SGP4 propagator computes TEME position at the requested time
-3. **Convert** — astropy transforms TEME → ITRS (ECEF) or TEME → ICRS (RA/Dec)
+### Horizontal positions (Az/El)
+
+```python
+positions = client.horizontal_positions(
+    lat=-45.87,     # observer latitude (degrees)
+    lon=170.60,     # observer longitude (degrees)
+    alt=100.0,      # observer altitude (meters)
+)
+```
+
+Derived from ECEF. Returns topocentric azimuth and elevation:
+
+```json
+[
+  {
+    "name": "GPS BIIR-2  (PRN 13)",
+    "azimuth_deg": 45.123456,
+    "elevation_deg": 30.654321,
+    "range_km": 20200.123
+  }
+]
+```
+
+Transform: ECEF → observer-relative ENU → Az/El (WGS84 ellipsoid).
+
+### Fast satellite count
+
+```python
+count = client.count_satellites()
+# Returns: number of TLE records (no propagation)
+```
+
+## Caching
+
+TLE data is cached in `~/.cache/tart-catalogue/`:
+- **Nearest-match**: any cached entry within 12 hours of the requested time is reused
+- **LRU eviction**: oldest 100+ entries are removed
+- **In-memory**: parsed SGP4 satellite objects are cached per cache key to avoid re-parsing TLE lines
+
+Server fetch requests are logged to stderr with the request datetime.
+
+## Coordinate transforms
+
+| Method | Input Frame | Output Frame | Transform |
+|---|---|---|---|
+| `ecef_positions` | TEME (SGP4) | ITRS (ECEF) | Rotate by −GMST |
+| `celestial_positions` | ITRS (ECEF) | ICRS (RA/Dec) | astropy ITRS→ICRS |
+| `horizontal_positions` | ITRS (ECEF) | ENU → Az/El | WGS84 geodetic + rotation |
+
+## Testing
+
+```sh
+uv run pytest tart_client/ -v
+```
+
+Tests validate against astropy-generated reference vectors in `test-vectors/test_vectors.json`.
