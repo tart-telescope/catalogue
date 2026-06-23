@@ -145,7 +145,6 @@ impl CatalogueClient {
         date: &DateTime<Utc>,
     ) -> Result<Vec<TleRecord>, Box<dyn Error>> {
         if let Some(cached) = cache::load(date) {
-            eprintln!("Using cached TLEs for {}", date.format("%Y-%m-%dT%H"));
             return Ok(cached);
         }
 
@@ -158,7 +157,6 @@ impl CatalogueClient {
         let records: Vec<TleRecord> = response.json().await?;
 
         cache::save(date, &records);
-        eprintln!("Fetched {} TLE records (cached)", records.len());
         Ok(records)
     }
 
@@ -174,8 +172,7 @@ impl CatalogueClient {
                 tle.line2.as_bytes(),
             ) {
                 Ok(e) => e,
-                Err(e) => {
-                    eprintln!("  skip {} (bad TLE): {:?}", tle.name, e);
+                Err(_e) => {
                     skipped += 1;
                     continue;
                 }
@@ -183,8 +180,7 @@ impl CatalogueClient {
 
             let constants = match Constants::from_elements(&elements) {
                 Ok(c) => c,
-                Err(e) => {
-                    eprintln!("  skip {} (bad constants): {:?}", tle.name, e);
+                Err(_e) => {
                     skipped += 1;
                     continue;
                 }
@@ -199,8 +195,7 @@ impl CatalogueClient {
 
                 let prediction = match constants.propagate(minutes_since_epoch) {
                     Ok(p) => p,
-                    Err(e) => {
-                        eprintln!("  skip {} at {}: {:?}", tle.name, date, e);
+                    Err(_e) => {
                         skipped += 1;
                         continue;
                     }
@@ -216,13 +211,7 @@ impl CatalogueClient {
         }
 
         if skipped > 0 {
-            eprintln!("Skipped {} satellite/date combinations", skipped);
         }
-        eprintln!(
-            "Propagated {} positions from {} TLEs",
-            results.len(),
-            tles.len()
-        );
         results
     }
 
