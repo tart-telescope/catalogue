@@ -14,7 +14,6 @@ import datetime
 import json
 import os
 import pathlib
-import pickle
 import sys
 from typing import Dict, List, Optional, Tuple
 
@@ -71,9 +70,6 @@ def _evict_lru() -> None:
     while len(files) > MAX_CACHE_ENTRIES:
         oldest = files.pop(0)
         oldest.unlink(missing_ok=True)
-        # Also remove corresponding pickle
-        pkl = oldest.with_suffix(".pkl")
-        pkl.unlink(missing_ok=True)
 
 
 def _parse_cache_timestamp(filename: str) -> Optional[datetime.datetime]:
@@ -110,37 +106,20 @@ def _find_nearest_cache(dt: datetime.datetime, suffix: str) -> Optional[pathlib.
 
 
 def _load_tle_cache(dt: datetime.datetime) -> Optional[List[Dict]]:
-    """Load cached TLE JSON records, preferring pickle for speed."""
-    # Try binary pickle first (pre-parsed satellites)
-    pkl_path = _find_nearest_cache(dt, "pkl")
-    if pkl_path is not None:
-        pkl_path.touch()
-        try:
-            return pickle.loads(pkl_path.read_bytes())
-        except (pickle.UnpicklingError, EOFError, AttributeError):
-            pkl_path.unlink(missing_ok=True)
-
-    # Fall back to JSON TLE
+    """Load cached TLE JSON records."""
     json_path = _find_nearest_cache(dt, "json")
     if json_path is not None:
         json_path.touch()
         return json.loads(json_path.read_text())
-
     return None
 
 
 def _save_tle_cache(dt: datetime.datetime, records: List[Dict]) -> None:
-    """Save TLE records as JSON. Pickle cache is written after first parse."""
+    """Save TLE records as JSON."""
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     path = CACHE_DIR / f"{_cache_key(dt)}.json"
     path.write_text(json.dumps(records))
     _evict_lru()
-
-
-def _save_pickle_cache(dt: datetime.datetime, sats: List[Tuple[str, Satrec]]) -> None:
-    """Save pre-parsed satellite objects for fast reload."""
-    path = CACHE_DIR / f"{_cache_key(dt)}.pkl"
-    path.write_bytes(pickle.dumps(sats))
 
 
 class CatalogueClient:
@@ -148,6 +127,7 @@ class CatalogueClient:
 
     def __init__(self, base_url: str = "https://tart.elec.ac.nz/catalog"):
         self.base_url = base_url.rstrip("/")
+        self._sat_cache: Dict[str, List[Tuple[str, Satrec]]] = {}
 
     def fetch_tles(self, dt: Optional[datetime.datetime] = None) -> List[Dict]:
         """Fetch raw TLE records from the server, with local caching."""
@@ -171,15 +151,10 @@ class CatalogueClient:
         return records
 
     def _get_satellites(self, dt: datetime.datetime) -> List[Tuple[str, Satrec]]:
-        """Return pre-parsed satellite objects (with binary caching)."""
-        # Check if we have pre-parsed pickle
-        pkl_path = _find_nearest_cache(dt, "pkl")
-        if pkl_path is not None:
-            pkl_path.touch()
-            try:
-                return pickle.loads(pkl_path.read_bytes())
-            except (pickle.UnpicklingError, EOFError, AttributeError):
-                pkl_path.unlink(missing_ok=True)
+        """Return pre-parsed satellite objects (in-memory cached)."""
+        key = _cache_key(dt)
+        if key in self._sat_cache:
+            return self._sat_cache[key]
 
         # Parse from TLE
         tles = self.fetch_tles(dt)
@@ -191,7 +166,7 @@ class CatalogueClient:
             except Exception:
                 continue
 
-        _save_pickle_cache(dt, sats)
+        self._sat_cache[key] = sats
         return sats
 
     def _propagate_ecef(self, dt: datetime.datetime) -> List[dict]:
