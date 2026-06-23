@@ -15,7 +15,7 @@ Uses FastAPI's `TestClient` — no running server or network needed.
 Exercises all endpoints against a running server:
 
 ```sh
-uv run python test/test_api.py
+uv run python tart-catalogue-server/test/test_api.py
 ```
 
 Or against a remote instance:

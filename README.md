@@ -86,9 +86,8 @@ See [TESTING.md](TESTING.md).
 
 | Directory | Description |
 |---|---|
-| `tart-catalogue-server/` | Python FastAPI server (Dockerfile, compose.yml) |
+| `tart-catalogue-server/` | Python FastAPI server, Docker, tests |
 | `app_skyfield/` | Skyfield-based satellite catalogue tools |
 | `tart-catalog-client-py/` | Python CLI/library client |
 | `tart-catalog-client-rs/` | Rust CLI client |
 | `nginx/` | Nginx reverse proxy config |
-| `test/` | Integration testbench |
