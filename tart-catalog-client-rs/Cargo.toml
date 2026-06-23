@@ -1,6 +1,6 @@
 [package]
 name = "tart-catalogue-client"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2024"
 description = "Rust client for the TART catalogue /ephemerides endpoint"
 authors = ["Tim Molteno <tim@elec.ac.nz>"]

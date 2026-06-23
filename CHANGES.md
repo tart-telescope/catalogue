@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.4.1
+
+### Added
+- `horizontal` CLI subcommand in both clients with configurable observer location
+
 ## v0.4.0
 
 ### Added
