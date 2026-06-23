@@ -2,13 +2,33 @@
 name = "tart-catalogue-client"
 version = "0.3.0"
 description = "Python client for the TART catalogue ephemerides endpoint"
+authors = [
+    {name = "Tim Molteno", email = "tim@elec.ac.nz"},
+]
+license = {text = "GPL-3.0-only"}
+readme = "README.md"
 requires-python = ">=3.11"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Astronomy",
+]
 dependencies = [
     "astropy>=7.0",
     "numpy>=2.0",
     "requests>=2.32",
     "sgp4>=2.0",
 ]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["tart_client"]
 
 [dependency-groups]
 dev = [

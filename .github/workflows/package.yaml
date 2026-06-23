@@ -1,9 +1,8 @@
-name: Publish tart-catalogue-client package
+name: Publish tart-catalogue-client-py package
 
 on:
   push:
     tags:
-      # Publish on any tag starting with a `v`, e.g., v0.1.0
       - v*
 
 jobs:
@@ -14,11 +13,14 @@ jobs:
     permissions:
       id-token: write
       contents: read
+    defaults:
+      run:
+        working-directory: tart-catalog-client-py
     steps:
       - name: Checkout
         uses: actions/checkout@v6
       - name: Install uv
-        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
       - name: Install Python 3.13
         run: uv python install 3.13
       - name: Build
