@@ -10,15 +10,32 @@ struct TleRecord {
     line2: String,
 }
 
-/// A computed satellite position in TEME (km, km/s).
+/// SGP4 prediction in TEME (km, km/s).
+#[derive(Debug)]
+struct TemeState {
+    name: String,
+    date: DateTime<Utc>,
+    position: [f64; 3],
+    velocity: [f64; 3],
+}
+
+/// ECEF position and velocity.
 #[derive(Debug, serde::Serialize)]
-struct SatellitePosition {
+struct EcefPosition {
     name: String,
     date: String,
-    /// TEME position [x, y, z] in km.
-    position_km: [f64; 3],
-    /// TEME velocity [vx, vy, vz] in km/s.
+    ecef_km: [f64; 3],
     velocity_km_s: [f64; 3],
+}
+
+/// Celestial (RA/Dec) position.
+#[derive(Debug, serde::Serialize)]
+struct CelestialPosition {
+    name: String,
+    date: String,
+    ra_hours: f64,
+    dec_degrees: f64,
+    distance_km: f64,
 }
 
 /// Configuration for the catalogue client.
@@ -48,19 +65,15 @@ impl CatalogueClient {
         Ok(records)
     }
 
-    /// Fetch TLEs and compute positions for a list of dates.
-    async fn compute_positions(
-        &self,
-        query_date: &DateTime<Utc>,
+    /// Propagate all TLEs to a list of dates, returning TEME states.
+    fn propagate_tles(
+        tles: &[TleRecord],
         dates: &[DateTime<Utc>],
-    ) -> Result<Vec<SatellitePosition>, Box<dyn Error>> {
-        let tles = self.fetch_ephemerides(query_date).await?;
-        eprintln!("Fetched {} TLE records", tles.len());
-
-        let mut all_positions = Vec::new();
+    ) -> Vec<TemeState> {
+        let mut results = Vec::new();
         let mut skipped = 0u32;
 
-        for tle in &tles {
+        for tle in tles {
             let elements = match Elements::from_tle(
                 Some(tle.name.clone()),
                 tle.line1.as_bytes(),
@@ -99,14 +112,11 @@ impl CatalogueClient {
                     }
                 };
 
-                let position = prediction.position;
-                let velocity = prediction.velocity;
-
-                all_positions.push(SatellitePosition {
+                results.push(TemeState {
                     name: tle.name.clone(),
-                    date: date.to_rfc3339(),
-                    position_km: [position[0], position[1], position[2]],
-                    velocity_km_s: [velocity[0], velocity[1], velocity[2]],
+                    date: *date,
+                    position: prediction.position,
+                    velocity: prediction.velocity,
                 });
             }
         }
@@ -115,12 +125,65 @@ impl CatalogueClient {
             eprintln!("Skipped {} satellite/date combinations", skipped);
         }
         eprintln!(
-            "Computed {} positions from {} TLEs",
-            all_positions.len(),
+            "Propagated {} positions from {} TLEs",
+            results.len(),
             tles.len()
         );
+        results
+    }
 
-        Ok(all_positions)
+    /// Compute ECEF positions for a list of dates.
+    async fn ecef_positions(
+        &self,
+        query_date: &DateTime<Utc>,
+        dates: &[DateTime<Utc>],
+    ) -> Result<Vec<EcefPosition>, Box<dyn Error>> {
+        let tles = self.fetch_ephemerides(query_date).await?;
+        eprintln!("Fetched {} TLE records", tles.len());
+        let teme_states = Self::propagate_tles(&tles, dates);
+
+        Ok(teme_states
+            .into_iter()
+            .map(|s| {
+                let gmst_rad = gmst(&s.date).to_radians();
+                let ecef = rotate_z(&s.position, -gmst_rad);
+                let vel = rotate_z(&s.velocity, -gmst_rad);
+                EcefPosition {
+                    name: s.name,
+                    date: s.date.to_rfc3339(),
+                    ecef_km: [round(ecef[0], 6), round(ecef[1], 6), round(ecef[2], 6)],
+                    velocity_km_s: [round(vel[0], 6), round(vel[1], 6), round(vel[2], 6)],
+                }
+            })
+            .collect())
+    }
+
+    /// Compute celestial (RA/Dec) positions for a list of dates.
+    async fn celestial_positions(
+        &self,
+        query_date: &DateTime<Utc>,
+        dates: &[DateTime<Utc>],
+    ) -> Result<Vec<CelestialPosition>, Box<dyn Error>> {
+        let tles = self.fetch_ephemerides(query_date).await?;
+        eprintln!("Fetched {} TLE records", tles.len());
+        let teme_states = Self::propagate_tles(&tles, dates);
+
+        Ok(teme_states
+            .into_iter()
+            .map(|s| {
+                let p = s.position;
+                let r = (p[0] * p[0] + p[1] * p[1] + p[2] * p[2]).sqrt();
+                let ra = p[1].atan2(p[0]); // radians
+                let dec = (p[2] / r).asin(); // radians
+                CelestialPosition {
+                    name: s.name,
+                    date: s.date.to_rfc3339(),
+                    ra_hours: round(ra.to_degrees() / 15.0, 6),
+                    dec_degrees: round(dec.to_degrees(), 6),
+                    distance_km: round(r, 1),
+                }
+            })
+            .collect())
     }
 
     /// Convert a `DateTime<Utc>` to days since 1949-12-31 00:00 UT (sgp4 epoch).
@@ -129,6 +192,21 @@ impl CatalogueClient {
         let jd = julian_day(dt);
         jd - sgp4_epoch_jd
     }
+}
+
+/// Rotate a 3-vector around the Z axis by `angle` radians.
+fn rotate_z(v: &[f64; 3], angle: f64) -> [f64; 3] {
+    let (s, c) = angle.sin_cos();
+    [
+        v[0] * c - v[1] * s,
+        v[0] * s + v[1] * c,
+        v[2],
+    ]
+}
+
+fn round(x: f64, decimals: u32) -> f64 {
+    let scale = 10f64.powi(decimals as i32);
+    (x * scale).round() / scale
 }
 
 /// Compute the Julian Day for a given UTC datetime.
@@ -140,16 +218,44 @@ fn julian_day(dt: &DateTime<Utc>) -> f64 {
         + dt.minute() as f64 / 1440.0
         + dt.second() as f64 / 86400.0;
 
-    let a = (14.0 - month) / 12.0;
+    let a = ((14.0 - month) / 12.0).floor();
     let y = year + 4800.0 - a;
     let m = month + 12.0 * a - 3.0;
 
-    day + (153.0 * m + 2.0) / 5.0
+    day + ((153.0 * m + 2.0) / 5.0).floor()
         + 365.0 * y
         + (y / 4.0).floor()
         - (y / 100.0).floor()
         + (y / 400.0).floor()
         - 32045.0
+}
+
+/// Greenwich Mean Sidereal Time in degrees for a UTC datetime.
+fn gmst(dt: &DateTime<Utc>) -> f64 {
+    let jd = julian_day(dt);
+    let jd0 = (jd + 0.5).floor() - 0.5; // JD at 0h UT
+    let t = (jd0 - 2451545.0) / 36525.0;
+
+    // GMST at 0h UT (USNO formula, degrees)
+    let gmst0 = 100.46061837
+        + 36000.770053608 * t
+        + 0.000387933 * t * t
+        - (t * t * t) / 38710000.0;
+
+    // Add fraction of day
+    let frac_day = jd - jd0;
+    let gmst_deg = gmst0 + 360.98564736629 * frac_day;
+
+    // Normalize to [0, 360)
+    gmst_deg.rem_euclid(360.0)
+}
+
+fn dates_from_now() -> Vec<DateTime<Utc>> {
+    let now = Utc::now();
+    (0..=24)
+        .step_by(6)
+        .map(|h| now + chrono::Duration::hours(h))
+        .collect()
 }
 
 #[tokio::main]
@@ -159,17 +265,23 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let client = CatalogueClient::new(&base_url);
 
+    // Parse subcommand from first positional arg
+    let args: Vec<String> = std::env::args().collect();
+    let cmd = args.get(1).map(|s| s.as_str()).unwrap_or("ecef");
+
     let now = Utc::now();
+    let dates = dates_from_now();
 
-    let dates: Vec<DateTime<Utc>> = (0..=24)
-        .step_by(6)
-        .map(|h| now + chrono::Duration::hours(h))
-        .collect();
-
-    let positions = client.compute_positions(&now, &dates).await?;
-
-    let json = serde_json::to_string_pretty(&positions)?;
-    println!("{}", json);
+    match cmd {
+        "celestial" | "cel" => {
+            let positions = client.celestial_positions(&now, &dates).await?;
+            println!("{}", serde_json::to_string_pretty(&positions)?);
+        }
+        _ => {
+            let positions = client.ecef_positions(&now, &dates).await?;
+            println!("{}", serde_json::to_string_pretty(&positions)?);
+        }
+    }
 
     Ok(())
 }
