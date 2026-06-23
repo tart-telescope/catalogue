@@ -1,5 +1,6 @@
 use chrono::{DateTime, Datelike, Timelike, Utc};
 use sgp4::{Constants, Elements, MinutesSinceEpoch};
+use std::collections::HashMap;
 use std::error::Error;
 use std::fs;
 use std::path::PathBuf;
@@ -21,6 +22,9 @@ struct TemeState {
     position: [f64; 3],
     velocity: [f64; 3],
 }
+
+/// Pre-parsed propagator: (name, Constants, epoch_days).
+type CachedPropagator = (String, Constants, f64);
 
 /// Raw ECEF position with datetime for further transforms.
 #[derive(Debug)]
@@ -64,14 +68,13 @@ mod cache {
     }
 
     /// Round datetime to the nearest hour for a stable cache key.
-    fn cache_key(dt: &DateTime<Utc>) -> String {
+    pub fn cache_key(dt: &DateTime<Utc>) -> String {
         format!("{:04}-{:02}-{:02}T{:02}", dt.year(), dt.month(), dt.day(), dt.hour())
     }
 
     /// Parse a cache filename like '2026-06-16T13.json' into hours since epoch.
     fn parse_cache_hours(name: &str) -> Option<f64> {
         let stem = name.strip_suffix(".json")?;
-        // Format: YYYY-MM-DDTHH
         let parts: Vec<&str> = stem.split('T').collect();
         if parts.len() != 2 {
             return None;
@@ -84,7 +87,6 @@ mod cache {
         let month: u32 = date_parts[1].parse().ok()?;
         let day: u32 = date_parts[2].parse().ok()?;
         let hour: u32 = parts[1].parse().ok()?;
-        // Approximate: days since year 0 + hours
         let days = (year as f64 - 1.0) * 365.25 + (month as f64 - 1.0) * 30.44 + day as f64;
         Some(days * 24.0 + hour as f64)
     }
@@ -152,7 +154,6 @@ mod cache {
             return None;
         }
 
-        // Touch to update LRU
         let _ = fs::File::open(&path)
             .and_then(|f| f.set_times(fs::FileTimes::new().set_modified(SystemTime::now())));
         let raw = fs::read_to_string(&path).ok()?;
@@ -190,12 +191,14 @@ mod cache {
 /// Configuration for the catalogue client.
 struct CatalogueClient {
     base_url: String,
+    propagator_cache: HashMap<String, Vec<CachedPropagator>>,
 }
 
 impl CatalogueClient {
     fn new(base_url: &str) -> Self {
         Self {
             base_url: base_url.to_string(),
+            propagator_cache: HashMap::new(),
         }
     }
 
@@ -221,11 +224,17 @@ impl CatalogueClient {
         Ok(records)
     }
 
-    /// Propagate all TLEs to a list of dates, returning TEME states.
-    fn propagate_tles(tles: &[TleRecord], dates: &[DateTime<Utc>]) -> Vec<TemeState> {
-        let mut results = Vec::new();
-        let mut skipped = 0u32;
+    /// Get or build cached SGP4 propagators for a set of TLEs.
+    fn get_propagators(
+        &mut self,
+        cache_key: &str,
+        tles: &[TleRecord],
+    ) -> Vec<CachedPropagator> {
+        if let Some(cached) = self.propagator_cache.get(cache_key) {
+            return cached.clone();
+        }
 
+        let mut propagators = Vec::new();
         for tle in tles {
             let elements = match Elements::from_tle(
                 Some(tle.name.clone()),
@@ -233,21 +242,31 @@ impl CatalogueClient {
                 tle.line2.as_bytes(),
             ) {
                 Ok(e) => e,
-                Err(_e) => {
-                    skipped += 1;
-                    continue;
-                }
+                Err(_) => continue,
             };
-
+            let epoch = elements.epoch();
             let constants = match Constants::from_elements(&elements) {
                 Ok(c) => c,
-                Err(_e) => {
-                    skipped += 1;
-                    continue;
-                }
+                Err(_) => continue,
             };
+            propagators.push((tle.name.clone(), constants, epoch));
+        }
 
-            let tle_epoch_days = elements.epoch();
+        self.propagator_cache
+            .insert(cache_key.to_string(), propagators.clone());
+        propagators
+    }
+
+    /// Propagate cached Constants to a list of dates, returning TEME states.
+    fn propagate_tles(
+        propagators: &[CachedPropagator],
+        dates: &[DateTime<Utc>],
+    ) -> Vec<TemeState> {
+        let mut results = Vec::new();
+        let mut skipped = 0u32;
+
+        for (name, constants, tle_epoch_days) in propagators {
+            let tle_epoch_days = *tle_epoch_days;
 
             for date in dates {
                 let date_days = Self::datetime_to_sgp4_days(date);
@@ -263,7 +282,7 @@ impl CatalogueClient {
                 };
 
                 results.push(TemeState {
-                    name: tle.name.clone(),
+                    name: name.clone(),
                     date: *date,
                     position: prediction.position,
                     velocity: prediction.velocity,
@@ -271,8 +290,7 @@ impl CatalogueClient {
             }
         }
 
-        if skipped > 0 {
-        }
+        if skipped > 0 {}
         results
     }
 
@@ -296,18 +314,20 @@ impl CatalogueClient {
 
     /// Compute ECEF positions for a list of dates (primary computation).
     async fn _propagate_ecef(
-        &self,
+        &mut self,
         query_date: &DateTime<Utc>,
         dates: &[DateTime<Utc>],
     ) -> Result<Vec<EcefState>, Box<dyn Error>> {
         let tles = self.fetch_tles(query_date).await?;
-        let teme_states = Self::propagate_tles(&tles, dates);
+        let cache_key = cache::cache_key(query_date);
+        let propagators = self.get_propagators(&cache_key, &tles);
+        let teme_states = Self::propagate_tles(&propagators, dates);
         Ok(Self::teme_to_ecef(teme_states))
     }
 
     /// Return ECEF positions (km) and velocities (km/s) for all satellites.
     async fn ecef_positions(
-        &self,
+        &mut self,
         query_date: &DateTime<Utc>,
         dates: &[DateTime<Utc>],
     ) -> Result<Vec<EcefPosition>, Box<dyn Error>> {
@@ -333,7 +353,7 @@ impl CatalogueClient {
 
     /// Return the number of satellites available at the given date.
     async fn count_satellites(
-        &self,
+        &mut self,
         query_date: &DateTime<Utc>,
     ) -> Result<usize, Box<dyn Error>> {
         let states = self._propagate_ecef(query_date, &[*query_date]).await?;
@@ -342,7 +362,7 @@ impl CatalogueClient {
 
     /// Return celestial (RA/Dec) positions derived from ECEF.
     async fn celestial_positions(
-        &self,
+        &mut self,
         query_date: &DateTime<Utc>,
         dates: &[DateTime<Utc>],
     ) -> Result<Vec<CelestialPosition>, Box<dyn Error>> {
@@ -436,7 +456,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let base_url = std::env::var("TART_CATALOGUE_URL")
         .unwrap_or_else(|_| "https://tart.elec.ac.nz/catalog".to_string());
 
-    let client = CatalogueClient::new(&base_url);
+    let mut client = CatalogueClient::new(&base_url);
 
     let args: Vec<String> = std::env::args().collect();
     let cmd = args.get(1).map(|s| s.as_str()).unwrap_or("ecef");
@@ -451,7 +471,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         }
         "benchmark" | "bench" => {
             let count: usize = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(1000);
-            run_benchmark(&client, count).await?;
+            run_benchmark(&mut client, count).await?;
         }
         _ => {
             let positions = client.ecef_positions(&now, &dates).await?;
@@ -462,7 +482,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-async fn run_benchmark(client: &CatalogueClient, count: usize) -> Result<(), Box<dyn Error>> {
+async fn run_benchmark(client: &mut CatalogueClient, count: usize) -> Result<(), Box<dyn Error>> {
     let n = count.max(1);
     let now = Utc::now();
     let week_ago = now - chrono::Duration::days(7);
