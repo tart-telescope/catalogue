@@ -140,14 +140,16 @@ class CatalogueClient:
         if cached is not None:
             return cached
 
-        print(f"Fetching ephemerides for {dt.isoformat()}", file=sys.stderr)
+        # Truncate to hour for cache-friendly server requests
+        dt_hour = dt.replace(minute=0, second=0, microsecond=0)
+        print(f"Fetching ephemerides for {dt_hour.isoformat()}", file=sys.stderr)
         url = f"{self.base_url}/ephemerides"
-        params = {"date": dt.isoformat()}
+        params = {"date": dt_hour.isoformat()}
         resp = requests.get(url, params=params, timeout=30)
         resp.raise_for_status()
         records = resp.json()
 
-        _save_tle_cache(dt, records)
+        _save_tle_cache(dt_hour, records)
         return records
 
     def _get_satellites(self, dt: datetime.datetime) -> List[Tuple[str, Satrec]]:

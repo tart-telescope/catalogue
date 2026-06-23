@@ -221,16 +221,21 @@ impl CatalogueClient {
             return Ok(cached);
         }
 
-        eprintln!("Fetching ephemerides for {}", date.to_rfc3339());
+        // Truncate to hour for cache-friendly server requests
+        let dt_hour = date
+            .with_minute(0).unwrap()
+            .with_second(0).unwrap()
+            .with_nanosecond(0).unwrap();
+        eprintln!("Fetching ephemerides for {}", dt_hour.to_rfc3339());
         let url = format!(
             "{}/ephemerides?date={}",
             self.base_url,
-            date.to_rfc3339()
+            dt_hour.to_rfc3339()
         );
         let response = reqwest::get(&url).await?;
         let records: Vec<TleRecord> = response.json().await?;
 
-        cache::save(date, &records);
+        cache::save(&dt_hour, &records);
         Ok(records)
     }
 
