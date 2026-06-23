@@ -362,11 +362,11 @@ impl CatalogueClient {
 
     /// Return the number of satellites available at the given date.
     async fn count_satellites(
-        &mut self,
+        &self,
         query_date: &DateTime<Utc>,
     ) -> Result<usize, Box<dyn Error>> {
-        let states = self._propagate_ecef(query_date, &[*query_date]).await?;
-        Ok(states.len())
+        let tles = self.fetch_tles(query_date).await?;
+        Ok(tles.len())
     }
 
     /// Return celestial (RA/Dec) positions derived from ECEF.
@@ -487,7 +487,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         }
         "benchmark" | "bench" => {
             let count: usize = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(1000);
-            run_benchmark(&mut client, count).await?;
+            run_benchmark(&client, count).await?;
         }
         _ => {
             let positions = client.ecef_positions(&now, &dates).await?;
@@ -498,7 +498,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-async fn run_benchmark(client: &mut CatalogueClient, count: usize) -> Result<(), Box<dyn Error>> {
+async fn run_benchmark(client: &CatalogueClient, count: usize) -> Result<(), Box<dyn Error>> {
     let n = count.max(1);
     let now = Utc::now();
     let week_ago = now - chrono::Duration::days(7);
