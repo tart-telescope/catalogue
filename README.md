@@ -8,10 +8,8 @@ Live instance: `https://tart.elec.ac.nz/catalog`
 ## Quick start
 
 ```sh
-# Install dependencies
+cd tart-catalogue-server
 uv sync
-
-# Run the server
 uv run uvicorn tart_catalogue.main:app --host 0.0.0.0 --port 8876
 ```
 
@@ -20,8 +18,16 @@ Open `http://localhost:8876/docs` for the interactive API docs.
 ## Docker
 
 ```sh
+cd tart-catalogue-server
 docker compose build
 docker compose up -d
+```
+
+Or from the repo root:
+
+```sh
+docker compose -f tart-catalogue-server/compose.yml build
+docker compose -f tart-catalogue-server/compose.yml up -d
 ```
 
 The catalogue is served on port 8876 through an nginx reverse proxy.
@@ -38,8 +44,6 @@ The catalogue is served on port 8876 through an nginx reverse proxy.
 
 ### `/catalog`
 
-Query the visible sky from a location.
-
 ```
 GET /catalog?lat=-45.87&lon=170.60&alt=100&ele=10&date=2026-06-16T12:00:00Z
 ```
@@ -47,8 +51,6 @@ GET /catalog?lat=-45.87&lon=170.60&alt=100&ele=10&date=2026-06-16T12:00:00Z
 Returns a list of objects with `name`, `el` (elevation°), `az` (azimuth°), `r` (range m), `jy` (flux density).
 
 ### `/position`
-
-ECEF positions for all satellite constellations.
 
 ```
 GET /position?date=2026-06-16T12:00:00Z
@@ -58,36 +60,52 @@ Returns `name`, `ecef` [x,y,z] in meters, `ecef_dot` [vx,vy,vz] in m/s, `jy`.
 
 ### `/ephemerides`
 
-Raw TLE (Two-Line Element) data for client-side SGP4 propagation.
-
 ```
 GET /ephemerides?date=2026-06-16T12:00:00Z
 ```
 
-Returns `name`, `line1`, `line2` — feed these into any SGP4 library to compute
-positions without further server calls.
+Returns `name`, `line1`, `line2` — feed into any SGP4 library to compute positions client-side.
 
-## Rust client
+## Clients
 
-A fast Rust binary that calls `/ephemerides` and propagates positions locally:
+### Python client
+
+```sh
+cd tart-catalog-client-py
+uv sync
+uv run python -m tart_client.cli ecef        # ECEF positions
+uv run python -m tart_client.cli celestial   # RA/Dec positions
+uv run python -m tart_client.cli horizontal  # Az/El positions
+```
+
+### Rust client
 
 ```sh
 cd tart-catalog-client-rs
-cargo run --release
+cargo run --release                          # ECEF (default)
+cargo run --release -- celestial             # RA/Dec
+cargo run --release -- horizontal            # Az/El
 ```
 
-See `tart-catalog-client-rs/` for details.
+See each client's README for full API documentation.
 
 ## Testing
 
-See [TESTING.md](TESTING.md).
+```sh
+cd tart-catalogue-server
+make test-client        # integration testbench
+uv run pytest tart_catalogue/ -v  # unit tests
+```
+
+See [TESTING.md](TESTING.md) for full instructions.
 
 ## Projects
 
 | Directory | Description |
 |---|---|
-| `tart-catalogue-server/` | Python FastAPI server, Docker, tests |
+| `tart-catalogue-server/` | Python FastAPI server, Docker, Makefile, tests |
+| `tart-catalog-client-py/` | Python client library + CLI |
+| `tart-catalog-client-rs/` | Rust client library + CLI |
 | `app_skyfield/` | Skyfield-based satellite catalogue tools |
-| `tart-catalog-client-py/` | Python CLI/library client |
-| `tart-catalog-client-rs/` | Rust CLI client |
+| `test-vectors/` | Astropy-generated reference data for tests |
 | `nginx/` | Nginx reverse proxy config |
