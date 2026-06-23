@@ -208,6 +208,7 @@ impl CatalogueClient {
             return Ok(cached);
         }
 
+        eprintln!("Fetching ephemerides for {}", date.to_rfc3339());
         let url = format!(
             "{}/ephemerides?date={}",
             self.base_url,

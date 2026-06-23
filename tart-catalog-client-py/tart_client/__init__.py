@@ -13,6 +13,7 @@ import datetime
 import json
 import os
 import pathlib
+import sys
 from typing import Dict, List, Optional
 
 import numpy as np
@@ -103,6 +104,7 @@ class CatalogueClient:
         if cached is not None:
             return cached
 
+        print(f"Fetching ephemerides for {dt.isoformat()}", file=sys.stderr)
         url = f"{self.base_url}/ephemerides"
         params = {"date": dt.isoformat()}
         resp = requests.get(url, params=params, timeout=30)
