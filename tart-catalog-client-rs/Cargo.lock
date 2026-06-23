@@ -1255,7 +1255,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "tart-catalogue"
+name = "tart-catalogue-client"
 version = "0.3.0"
 dependencies = [
  "chrono",

@@ -2,5 +2,8 @@
 # After install, login and run the server manually.
 rsync -rv --exclude '*venv*' --exclude '__pycache__' \
     --exclude 'app_skyfield' \
+    --exclude 'rust-client' \
+    --exclude 'python-client' \
+    --exclude 'catalog_cache' \
     --exclude 'orbit_data' --exclude .git --exclude .gitignore \
     . tart@tart.elec.ac.nz:ops/tart_catalogue # --dry-run
