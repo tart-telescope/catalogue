@@ -1,4 +1,6 @@
 # (c) 2018-2023 Tim Molteno (tim@elec.ac.nz)
+.PHONY: build test test-client lint
+
 build:
 	DOCKER_BUILDKIT=1 docker compose -f tart-catalogue-server/compose.yml build
 test:
