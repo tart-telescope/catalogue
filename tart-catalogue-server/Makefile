@@ -7,7 +7,7 @@ test:
 	docker compose up --build
 
 test-client:
-	python3 test/test_api.py
+	TART_CATALOGUE_URL=http://localhost:8876 cargo run --manifest-path ../tart-catalog-client-rs/Cargo.toml --release
 
 lint:
 	flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics

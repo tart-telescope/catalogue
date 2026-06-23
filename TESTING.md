@@ -15,11 +15,18 @@ Uses FastAPI's `TestClient` — no running server or network needed.
 
 ### Integration testbench
 
-Exercises all endpoints against a running server:
+Runs the Rust client against a running server:
 
 ```sh
 cd tart-catalogue-server
-python3 test/test_api.py
+make test-client   # Rust client -> localhost:8876
+```
+
+Or the Python integration testbench:
+
+```sh
+cd tart-catalogue-server
+TART_CATALOGUE_URL=http://localhost:8876 python3 test/test_api.py
 ```
 
 Or against a remote instance:
