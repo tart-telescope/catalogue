@@ -536,8 +536,17 @@ mod tests {
     const GPS_TLE_L1: &str = "1 24876U 97035A   24164.50000000  .00000080  00000+0  00000+0 0  9999";
     const GPS_TLE_L2: &str = "2 24876  55.4401 180.3028 0103987  60.0787 301.0966  2.00562231196828";
 
+    /// Reference values from astropy TEME->ITRS (includes polar motion/nutation).
+
     fn test_date() -> DateTime<Utc> {
         Utc.with_ymd_and_hms(2024, 6, 12, 12, 0, 0).unwrap()
+    }
+
+    fn make_tle(l1: &str, l2: &str) -> (Elements, Constants) {
+        let elements = Elements::from_tle(Some("test".into()), l1.as_bytes(), l2.as_bytes())
+            .expect("TLE parse");
+        let constants = Constants::from_elements(&elements).expect("Constants");
+        (elements, constants)
     }
 
     #[test]
@@ -554,29 +563,27 @@ mod tests {
 
     #[test]
     fn test_gmst_increases() {
-        let dt1 = test_date();
-        let dt2 = dt1 + chrono::Duration::hours(1);
-        let g1 = gmst(&dt1);
-        let g2 = gmst(&dt2);
+        let d1 = test_date();
+        let d2 = d1 + chrono::Duration::hours(1);
+        let g1 = gmst(&d1);
+        let g2 = gmst(&d2);
         let delta = (g2 - g1 + 360.0) % 360.0;
-        assert!(delta > 14.5 && delta < 15.5, "delta = {}", delta);
+        assert!(delta > 14.5 && delta < 15.5, "delta={}", delta);
     }
 
     #[test]
     fn test_rotate_z_sc_identity() {
-        let v = [1.0, 2.0, 3.0];
-        let result = rotate_z_sc(&v, 0.0, 1.0);
-        assert!((result[0] - 1.0).abs() < 1e-10);
-        assert!((result[1] - 2.0).abs() < 1e-10);
-        assert!((result[2] - 3.0).abs() < 1e-10);
+        let r = rotate_z_sc(&[1.0, 2.0, 3.0], 0.0, 1.0);
+        assert!((r[0] - 1.0).abs() < 1e-10);
+        assert!((r[1] - 2.0).abs() < 1e-10);
+        assert!((r[2] - 3.0).abs() < 1e-10);
     }
 
     #[test]
     fn test_rotate_z_sc_90deg() {
-        let v = [1.0, 0.0, 0.0];
-        let result = rotate_z_sc(&v, 1.0, 0.0);
-        assert!((result[0] - 0.0).abs() < 1e-10);
-        assert!((result[1] - 1.0).abs() < 1e-10);
+        let r = rotate_z_sc(&[1.0, 0.0, 0.0], 1.0, 0.0);
+        assert!((r[0] - 0.0).abs() < 1e-10);
+        assert!((r[1] - 1.0).abs() < 1e-10);
     }
 
     #[test]
@@ -593,62 +600,29 @@ mod tests {
     }
 
     #[test]
-    fn test_sgp4_propagation() {
-        let tle = TleRecord {
-            name: "GPS BIIR-2 (PRN 13)".into(),
-            line1: GPS_TLE_L1.into(),
-            line2: GPS_TLE_L2.into(),
-        };
-        let elements = Elements::from_tle(
-            Some(tle.name.clone()),
-            tle.line1.as_bytes(),
-            tle.line2.as_bytes(),
-        )
-        .expect("TLE parse");
-        let constants = Constants::from_elements(&elements).expect("Constants");
-        let epoch = elements.epoch();
+    fn test_sgp4_orbital_radius() {
+        let (elements, constants) = make_tle(GPS_TLE_L1, GPS_TLE_L2);
         let date = test_date();
         let date_days = CatalogueClient::datetime_to_sgp4_days(&date);
-        let minutes = MinutesSinceEpoch((date_days - epoch) * 24.0 * 60.0);
-        let prediction = constants.propagate(minutes).expect("Propagation");
-        let r = (prediction.position[0].powi(2)
-            + prediction.position[1].powi(2)
-            + prediction.position[2].powi(2))
-            .sqrt();
-        assert!(r > 20000.0 && r < 30000.0, "orbital radius = {}", r);
-        let v = (prediction.velocity[0].powi(2)
-            + prediction.velocity[1].powi(2)
-            + prediction.velocity[2].powi(2))
-            .sqrt();
-        assert!(v > 3.0 && v < 5.0, "orbital velocity = {}", v);
+        let minutes = MinutesSinceEpoch((date_days - elements.epoch()) * 24.0 * 60.0);
+        let p = constants.propagate(minutes).expect("Propagation");
+        let r = (p.position[0].powi(2) + p.position[1].powi(2) + p.position[2].powi(2)).sqrt();
+        assert!(r > 20000.0 && r < 30000.0, "r={}", r);
+        let v = (p.velocity[0].powi(2) + p.velocity[1].powi(2) + p.velocity[2].powi(2)).sqrt();
+        assert!(v > 3.0 && v < 5.0, "v={}", v);
     }
 
     #[test]
-    fn test_ecef_transform() {
-        let tle = TleRecord {
-            name: "GPS BIIR-2 (PRN 13)".into(),
-            line1: GPS_TLE_L1.into(),
-            line2: GPS_TLE_L2.into(),
-        };
-        let elements = Elements::from_tle(
-            Some(tle.name.clone()),
-            tle.line1.as_bytes(),
-            tle.line2.as_bytes(),
-        )
-        .expect("TLE parse");
-        let constants = Constants::from_elements(&elements).expect("Constants");
+    fn test_ecef_preserves_magnitude() {
+        let (elements, constants) = make_tle(GPS_TLE_L1, GPS_TLE_L2);
         let date = test_date();
         let date_days = CatalogueClient::datetime_to_sgp4_days(&date);
-        let epoch = elements.epoch();
-        let minutes = MinutesSinceEpoch((date_days - epoch) * 24.0 * 60.0);
-        let prediction = constants.propagate(minutes).expect("Propagation");
+        let minutes = MinutesSinceEpoch((date_days - elements.epoch()) * 24.0 * 60.0);
+        let p = constants.propagate(minutes).expect("Propagation");
         let gmst_rad = gmst(&date).to_radians();
         let (s, c) = (-gmst_rad).sin_cos();
-        let ecef = rotate_z_sc(&prediction.position, s, c);
-        let r_teme = (prediction.position[0].powi(2)
-            + prediction.position[1].powi(2)
-            + prediction.position[2].powi(2))
-            .sqrt();
+        let ecef = rotate_z_sc(&p.position, s, c);
+        let r_teme = (p.position[0].powi(2) + p.position[1].powi(2) + p.position[2].powi(2)).sqrt();
         let r_ecef = (ecef[0].powi(2) + ecef[1].powi(2) + ecef[2].powi(2)).sqrt();
         assert!((r_teme - r_ecef).abs() < 1.0);
     }

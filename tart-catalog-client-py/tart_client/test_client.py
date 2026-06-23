@@ -4,6 +4,10 @@ import datetime
 
 import numpy as np
 import pytest
+from astropy import coordinates as coord
+from astropy import time
+from astropy import units as u
+from sgp4.api import Satrec, jday
 
 from tart_client import CatalogueClient, gmst_rad, julian_day
 
@@ -140,5 +144,92 @@ def test_count_satellites():
     try:
         count = client.count_satellites(dt=TEST_DATE)
         assert count == 2
+    finally:
+        client.fetch_tles = original_fetch
+
+
+def _astropy_ecef(dt, tle):
+    """Compute ECEF position using astropy TEME->ITRS transform."""
+    sat = Satrec.twoline2rv(tle["line1"], tle["line2"])
+    jd_val, fr = jday(dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second)
+    e, pos, vel = sat.sgp4(jd_val, fr)
+    assert e == 0
+
+    t = time.Time(jd_val, jd_val - jd_val + fr, format="jd", scale="utc")
+    teme = coord.TEME(
+        x=pos[0] * u.km,
+        y=pos[1] * u.km,
+        z=pos[2] * u.km,
+        v_x=vel[0] * u.km / u.s,
+        v_y=vel[1] * u.km / u.s,
+        v_z=vel[2] * u.km / u.s,
+        obstime=t,
+    )
+    itrs = teme.transform_to(coord.ITRS(obstime=t))
+    return (
+        [itrs.x.to_value(u.km), itrs.y.to_value(u.km), itrs.z.to_value(u.km)],
+        [
+            itrs.v_x.to_value(u.km / u.s),
+            itrs.v_y.to_value(u.km / u.s),
+            itrs.v_z.to_value(u.km / u.s),
+        ],
+    )
+
+
+def _astropy_celestial(dt, tle):
+    """Compute celestial (RA/Dec) using astropy ITRS->ICRS transform."""
+    pos_ecef, _ = _astropy_ecef(dt, tle)
+    t = time.Time(dt)
+    itrs = coord.ITRS(
+        x=pos_ecef[0] * u.km, y=pos_ecef[1] * u.km, z=pos_ecef[2] * u.km, obstime=t
+    )
+    icrs = itrs.transform_to(coord.ICRS())
+    r = np.sqrt(pos_ecef[0] ** 2 + pos_ecef[1] ** 2 + pos_ecef[2] ** 2)
+    return icrs.ra.to(u.hourangle).value, icrs.dec.to(u.deg).value, r
+
+
+def test_ecef_vs_astropy():
+    """Our direct rotation ECEF should match astropy TEME->ITRS.
+
+    Our simplified -GMST rotation omits polar motion and nutation
+    corrections that astropy includes. Expect agreement to ~100 m.
+    """
+    client = CatalogueClient()
+    original_fetch = client.fetch_tles
+    client.fetch_tles = lambda dt=None: [GPS_TLE]
+    try:
+        our = client.ecef_positions(dt=TEST_DATE)
+        astro_pos, astro_vel = _astropy_ecef(TEST_DATE, GPS_TLE)
+
+        for i in range(3):
+            diff_pos = abs(our[0]["ecef_km"][i] - astro_pos[i])
+            diff_vel = abs(our[0]["velocity_km_s"][i] - astro_vel[i])
+            assert diff_pos < 0.1, (
+                f"Position axis {i}: ours={our[0]['ecef_km'][i]}, astropy={astro_pos[i]}"
+            )
+            assert diff_vel < 5.0, (
+                f"Velocity axis {i}: ours={our[0]['velocity_km_s'][i]}, astropy={astro_vel[i]}"
+            )
+    finally:
+        client.fetch_tles = original_fetch
+
+
+def test_celestial_vs_astropy():
+    """Our celestial positions should match astropy ITRS->ICRS."""
+    client = CatalogueClient()
+    original_fetch = client.fetch_tles
+    client.fetch_tles = lambda dt=None: [GPS_TLE]
+    try:
+        our = client.celestial_positions(dt=TEST_DATE)
+        ra_astro, dec_astro, r_astro = _astropy_celestial(TEST_DATE, GPS_TLE)
+
+        # RA/Dec should match within ~0.001 degrees
+        ra_diff = abs(our[0]["ra_hours"] * 15.0 - ra_astro * 15.0)
+        dec_diff = abs(our[0]["dec_degrees"] - dec_astro)
+        assert ra_diff < 0.01, f"RA: ours={our[0]['ra_hours']}h, astropy={ra_astro}h"
+        assert dec_diff < 0.01, (
+            f"Dec: ours={our[0]['dec_degrees']}, astropy={dec_astro}"
+        )
+        assert abs(our[0]["distance_km"] - r_astro) < 1.0
     finally:
         client.fetch_tles = original_fetch
