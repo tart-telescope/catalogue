@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.4.0
+
+### Added
+- `horizontal_positions()` method in both clients: ECEF → ENU → Az/El using WGS84 ellipsoid
+- `geodetic_to_ecef()` helper in Rust for observer position computation
+- Astropy-generated test vectors in `test-vectors/test_vectors.json` with TEME, ECEF, celestial, and horizontal reference values for 4 dates
+- Coordinate transform tests: ECEF vs astropy TEME→ITRS, celestial vs astropy ITRS→ICRS, horizontal vs astropy AltAz
+- GMST, Julian day, rotation matrix, and SGP4 orbital property tests in Rust
+- `cargo test` in `publish-crate.yml` CI workflow
+
+### Changed
+- Caching now uses nearest-match within 12 hours instead of per-file staleness
+- `count_satellites()` in Rust no longer does full SGP4 propagation (was 1000× slower than Python)
+- Benchmark outputs JSON instead of plain text, includes `cache_entries` field
+- Both client READMEs updated with full API documentation and coordinate transform tables
+
 ## v0.3.3
 
 ### Added
