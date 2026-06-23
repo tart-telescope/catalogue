@@ -46,6 +46,10 @@ def cmd_benchmark(args):
         total_positions += len(results)
     elapsed = time.perf_counter() - t0
 
+    from tart_client import CACHE_DIR
+
+    cache_entries = len(list(CACHE_DIR.glob("*.json"))) if CACHE_DIR.exists() else 0
+
     print(
         json.dumps(
             {
@@ -56,6 +60,7 @@ def cmd_benchmark(args):
                 "positions_per_sec": round(total_positions / elapsed),
                 "queries_per_sec": round(N / elapsed, 1),
                 "avg_query_ms": round(elapsed / N * 1000, 1),
+                "cache_entries": cache_entries,
             },
             indent=2,
         )

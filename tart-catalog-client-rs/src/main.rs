@@ -125,6 +125,22 @@ mod cache {
         }
         evict_lru();
     }
+
+    /// Count the number of cached entries.
+    pub fn count() -> usize {
+        let dir = cache_dir();
+        if !dir.exists() {
+            return 0;
+        }
+        fs::read_dir(&dir)
+            .map(|entries| {
+                entries
+                    .filter_map(|e| e.ok())
+                    .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
+                    .count()
+            })
+            .unwrap_or(0)
+    }
 }
 
 /// Configuration for the catalogue client.
@@ -415,6 +431,7 @@ async fn run_benchmark(client: &CatalogueClient) -> Result<(), Box<dyn Error>> {
         "positions_per_sec": (total_positions as f64 / secs).round() as u64,
         "queries_per_sec": ((N as f64 / secs) * 10.0).round() / 10.0,
         "avg_query_ms": ((secs / N as f64 * 1000.0) * 10.0).round() / 10.0,
+        "cache_entries": cache::count(),
     });
     println!("{}", serde_json::to_string_pretty(&result)?);
 
