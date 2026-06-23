@@ -450,7 +450,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
             println!("{}", serde_json::to_string_pretty(&positions)?);
         }
         "benchmark" | "bench" => {
-            run_benchmark(&client).await?;
+            let count: usize = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(1000);
+            run_benchmark(&client, count).await?;
         }
         _ => {
             let positions = client.ecef_positions(&now, &dates).await?;
@@ -461,15 +462,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-async fn run_benchmark(client: &CatalogueClient) -> Result<(), Box<dyn Error>> {
-    const N: usize = 10_000;
+async fn run_benchmark(client: &CatalogueClient, count: usize) -> Result<(), Box<dyn Error>> {
+    let n = count.max(1);
     let now = Utc::now();
     let week_ago = now - chrono::Duration::days(7);
-    let step = (now - week_ago) / N as i32;
+    let step = (now - week_ago) / n as i32;
 
     let start = Instant::now();
     let mut total_positions = 0usize;
-    for i in 0..N {
+    for i in 0..n {
         let dt = week_ago + step * i as i32;
         total_positions += client.count_satellites(&dt).await?;
     }
@@ -478,12 +479,12 @@ async fn run_benchmark(client: &CatalogueClient) -> Result<(), Box<dyn Error>> {
 
     let result = serde_json::json!({
         "server": client.base_url,
-        "queries": N,
+        "queries": n,
         "total_positions": total_positions,
         "elapsed_s": (secs * 100.0).round() / 100.0,
         "positions_per_sec": (total_positions as f64 / secs).round() as u64,
-        "queries_per_sec": ((N as f64 / secs) * 10.0).round() / 10.0,
-        "avg_query_ms": ((secs / N as f64 * 1000.0) * 10.0).round() / 10.0,
+        "queries_per_sec": ((n as f64 / secs) * 10.0).round() / 10.0,
+        "avg_query_ms": ((secs / n as f64 * 1000.0) * 10.0).round() / 10.0,
         "cache_entries": cache::count(),
     });
     println!("{}", serde_json::to_string_pretty(&result)?);

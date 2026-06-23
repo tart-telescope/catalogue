@@ -31,7 +31,7 @@ def cmd_celestial(args):
 
 
 def cmd_benchmark(args):
-    N = 10_000
+    N = args.count
     client = CatalogueClient(base_url=args.url)
 
     now = datetime.datetime.now(datetime.timezone.utc)
@@ -87,8 +87,13 @@ def main():
     p_cel = sub.add_parser("celestial", help="Return celestial (RA/Dec) positions")
     p_cel.set_defaults(func=cmd_celestial)
 
-    p_bench = sub.add_parser(
-        "benchmark", help="Benchmark 10,000 celestial position queries"
+    p_bench = sub.add_parser("benchmark", help="Benchmark celestial position queries")
+    p_bench.add_argument(
+        "count",
+        nargs="?",
+        type=int,
+        default=1000,
+        help="Number of positions to request (default: 1000)",
     )
     p_bench.set_defaults(func=cmd_benchmark)
 
