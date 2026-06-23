@@ -31,7 +31,7 @@ CACHE_DIR = pathlib.Path.home() / ".cache" / "tart-catalogue"
 MAX_CACHE_ENTRIES = 100
 
 
-def _julian_day(dt: datetime.datetime) -> float:
+def julian_day(dt: datetime.datetime) -> float:
     """Compute Julian Day for a UTC datetime."""
     y = dt.year
     m = dt.month
@@ -44,7 +44,7 @@ def _julian_day(dt: datetime.datetime) -> float:
     return int(365.25 * (y + 4716)) + int(30.6001 * (m + 1)) + d + b - 1524.5
 
 
-def _gmst_rad(jd: float) -> float:
+def gmst_rad(jd: float) -> float:
     """Greenwich Mean Sidereal Time in radians."""
     jd0 = int(jd + 0.5) - 0.5
     t = (jd0 - 2451545.0) / 36525.0
@@ -177,7 +177,7 @@ class CatalogueClient:
         jd_full = jd + fr
 
         # Pre-compute GMST rotation (avoid astropy per satellite)
-        ang = -_gmst_rad(jd_full)
+        ang = -gmst_rad(jd_full)
         s, c = np.sin(ang), np.cos(ang)
 
         results = []
