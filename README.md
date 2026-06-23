@@ -86,7 +86,7 @@ See [TESTING.md](TESTING.md).
 
 | Directory | Description |
 |---|---|
-| `tart_catalogue/` | Python FastAPI server |
+| `tart-catalogue-server/` | Python FastAPI server (Dockerfile, compose.yml) |
 | `app_skyfield/` | Skyfield-based satellite catalogue tools |
 | `tart-catalog-client-py/` | Python CLI/library client |
 | `tart-catalog-client-rs/` | Rust CLI client |
