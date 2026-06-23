@@ -1,0 +1,16 @@
+[project]
+name = "tart-python-client"
+version = "0.3.0"
+description = "Python client for the TART catalogue ephemerides endpoint"
+requires-python = ">=3.11"
+dependencies = [
+    "astropy>=7.0",
+    "numpy>=2.0",
+    "requests>=2.32",
+    "sgp4>=2.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]
