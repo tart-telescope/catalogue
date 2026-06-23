@@ -536,17 +536,15 @@ mod tests {
     const GPS_TLE_L1: &str = "1 24876U 97035A   24164.50000000  .00000080  00000+0  00000+0 0  9999";
     const GPS_TLE_L2: &str = "2 24876  55.4401 180.3028 0103987  60.0787 301.0966  2.00562231196828";
 
-    /// Reference values from astropy TEME->ITRS (includes polar motion/nutation).
-
     fn test_date() -> DateTime<Utc> {
         Utc.with_ymd_and_hms(2024, 6, 12, 12, 0, 0).unwrap()
     }
 
     fn make_tle(l1: &str, l2: &str) -> (Elements, Constants) {
-        let elements = Elements::from_tle(Some("test".into()), l1.as_bytes(), l2.as_bytes())
+        let e = Elements::from_tle(Some("test".into()), l1.as_bytes(), l2.as_bytes())
             .expect("TLE parse");
-        let constants = Constants::from_elements(&elements).expect("Constants");
-        (elements, constants)
+        let c = Constants::from_elements(&e).expect("Constants");
+        (e, c)
     }
 
     #[test]
@@ -564,11 +562,11 @@ mod tests {
     #[test]
     fn test_gmst_increases() {
         let d1 = test_date();
-        let d2 = d1 + chrono::Duration::hours(1);
+        let d2 = d1 + chrono::Duration::hours(6);
         let g1 = gmst(&d1);
         let g2 = gmst(&d2);
         let delta = (g2 - g1 + 360.0) % 360.0;
-        assert!(delta > 14.5 && delta < 15.5, "delta={}", delta);
+        assert!(delta > 89.0 && delta < 91.0, "delta={}", delta);
     }
 
     #[test]
