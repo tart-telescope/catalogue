@@ -556,6 +556,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
             let positions = client.celestial_positions(&now, &dates).await?;
             println!("{}", serde_json::to_string_pretty(&positions)?);
         }
+        "horizontal" | "azel" | "az" => {
+            let positions = client.horizontal_positions(&now, &dates, -45.87, 170.60, 100.0).await?;
+            println!("{}", serde_json::to_string_pretty(&positions)?);
+        }
         "benchmark" | "bench" => {
             let count: usize = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(1000);
             run_benchmark(&client, count).await?;

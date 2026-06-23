@@ -30,6 +30,14 @@ def cmd_celestial(args):
     print(json.dumps(results, indent=2))
 
 
+def cmd_horizontal(args):
+    client = CatalogueClient(base_url=args.url)
+    results = client.horizontal_positions(
+        lat=args.lat, lon=args.lon, alt=args.alt, dt=args.date
+    )
+    print(json.dumps(results, indent=2))
+
+
 def cmd_benchmark(args):
     N = args.count
     client = CatalogueClient(base_url=args.url)
@@ -86,6 +94,18 @@ def main():
 
     p_cel = sub.add_parser("celestial", help="Return celestial (RA/Dec) positions")
     p_cel.set_defaults(func=cmd_celestial)
+
+    p_horiz = sub.add_parser("horizontal", help="Return horizontal (Az/El) positions")
+    p_horiz.add_argument(
+        "--lat", type=float, default=-45.87, help="Observer latitude (deg)"
+    )
+    p_horiz.add_argument(
+        "--lon", type=float, default=170.60, help="Observer longitude (deg)"
+    )
+    p_horiz.add_argument(
+        "--alt", type=float, default=100.0, help="Observer altitude (m)"
+    )
+    p_horiz.set_defaults(func=cmd_horizontal)
 
     p_bench = sub.add_parser("benchmark", help="Benchmark celestial position queries")
     p_bench.add_argument(
