@@ -3,6 +3,7 @@ use sgp4::{Constants, Elements, MinutesSinceEpoch};
 use std::error::Error;
 use std::fs;
 use std::path::PathBuf;
+use std::time::Instant;
 
 /// A TLE record as returned by the /ephemerides endpoint.
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
@@ -389,11 +390,42 @@ async fn main() -> Result<(), Box<dyn Error>> {
             let positions = client.celestial_positions(&now, &dates).await?;
             println!("{}", serde_json::to_string_pretty(&positions)?);
         }
+        "benchmark" | "bench" => {
+            run_benchmark(&client).await?;
+        }
         _ => {
             let positions = client.ecef_positions(&now, &dates).await?;
             println!("{}", serde_json::to_string_pretty(&positions)?);
         }
     }
+
+    Ok(())
+}
+
+async fn run_benchmark(client: &CatalogueClient) -> Result<(), Box<dyn Error>> {
+    const N: usize = 10_000;
+    let now = Utc::now();
+    let week_ago = now - chrono::Duration::days(7);
+    let step = (now - week_ago) / N as i32;
+
+    eprintln!("Benchmark: {} celestial position queries over the last week", N);
+    eprintln!("Server: {}", client.base_url);
+
+    let start = Instant::now();
+    let mut total_positions = 0usize;
+    for i in 0..N {
+        let dt = week_ago + step * i as i32;
+        let positions = client.celestial_positions(&dt, &[dt]).await?;
+        total_positions += positions.len();
+    }
+    let elapsed = start.elapsed();
+
+    let secs = elapsed.as_secs_f64();
+    eprintln!("Total time:       {:.2} s", secs);
+    eprintln!("Positions:        {}", total_positions);
+    eprintln!("Positions/sec:    {:.0}", total_positions as f64 / secs);
+    eprintln!("Queries/sec:      {:.1}", N as f64 / secs);
+    eprintln!("Avg query time:   {:.1} ms", secs / N as f64 * 1000.0);
 
     Ok(())
 }
