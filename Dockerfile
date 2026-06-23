@@ -12,11 +12,11 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 WORKDIR /object_position_server
 COPY README.md .
-COPY pyproject.toml .
-COPY uv.lock .
+COPY tart-catalogue/pyproject.toml .
+COPY tart-catalogue/uv.lock .
 RUN uv sync --no-dev --frozen
 
-COPY tart_catalogue tart_catalogue
+COPY tart-catalogue/tart_catalogue tart_catalogue
 
 RUN uv sync --no-dev --frozen
 
