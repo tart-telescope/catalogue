@@ -32,6 +32,33 @@ CACHE_DIR = pathlib.Path.home() / ".cache" / "tart-catalogue"
 MAX_CACHE_ENTRIES = 100
 
 
+def _julian_day(dt: datetime.datetime) -> float:
+    """Compute Julian Day for a UTC datetime."""
+    y = dt.year
+    m = dt.month
+    d = dt.day + dt.hour / 24.0 + dt.minute / 1440.0 + dt.second / 86400.0
+    if m <= 2:
+        y -= 1
+        m += 12
+    a = y // 100
+    b = 2 - a + a // 4
+    return int(365.25 * (y + 4716)) + int(30.6001 * (m + 1)) + d + b - 1524.5
+
+
+def _gmst_rad(jd: float) -> float:
+    """Greenwich Mean Sidereal Time in radians."""
+    jd0 = int(jd + 0.5) - 0.5
+    t = (jd0 - 2451545.0) / 36525.0
+    gmst_deg = (
+        100.46061837
+        + 36000.770053608 * t
+        + 0.000387933 * t * t
+        - t * t * t / 38710000.0
+        + 360.98564736629 * (jd - jd0)
+    )
+    return np.radians(gmst_deg % 360.0)
+
+
 def _cache_key(dt: datetime.datetime) -> str:
     """Round datetime to the nearest hour for a stable cache key."""
     rounded = dt.replace(minute=0, second=0, microsecond=0)
@@ -172,7 +199,11 @@ class CatalogueClient:
         sats = self._get_satellites(dt)
 
         jd, fr = jday(dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second)
-        t = time.Time(jd, jd - jd + fr, format="jd", scale="utc")
+        jd_full = jd + fr
+
+        # Pre-compute GMST rotation (avoid astropy per satellite)
+        ang = -_gmst_rad(jd_full)
+        s, c = np.sin(ang), np.cos(ang)
 
         results = []
         for name, sat in sats:
@@ -180,29 +211,26 @@ class CatalogueClient:
             if e != 0:
                 continue
 
-            teme = coord.TEME(
-                x=pos[0] * u.km,
-                y=pos[1] * u.km,
-                z=pos[2] * u.km,
-                v_x=vel[0] * u.km / u.s,
-                v_y=vel[1] * u.km / u.s,
-                v_z=vel[2] * u.km / u.s,
-                obstime=t,
-            )
-            itrs = teme.transform_to(coord.ITRS(obstime=t))
+            # Direct rotation (TEME -> ECEF): x' = x*c - y*s, y' = x*s + y*c
+            x, y, z = pos
+            vx, vy, vz = vel
+            ecef_x = x * c - y * s
+            ecef_y = x * s + y * c
+            ecef_vx = vx * c - vy * s
+            ecef_vy = vx * s + vy * c
 
             results.append(
                 {
                     "name": name,
                     "ecef_km": [
-                        round(itrs.x.to_value(u.km), 6),
-                        round(itrs.y.to_value(u.km), 6),
-                        round(itrs.z.to_value(u.km), 6),
+                        round(ecef_x, 6),
+                        round(ecef_y, 6),
+                        round(z, 6),
                     ],
                     "velocity_km_s": [
-                        round(itrs.v_x.to_value(u.km / u.s), 6),
-                        round(itrs.v_y.to_value(u.km / u.s), 6),
-                        round(itrs.v_z.to_value(u.km / u.s), 6),
+                        round(ecef_vx, 6),
+                        round(ecef_vy, 6),
+                        round(vz, 6),
                     ],
                 }
             )

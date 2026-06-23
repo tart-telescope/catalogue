@@ -294,14 +294,14 @@ impl CatalogueClient {
         results
     }
 
-    /// Convert TEME states to ECEF states.
-    fn teme_to_ecef(teme_states: Vec<TemeState>) -> Vec<EcefState> {
+    /// Convert TEME states to ECEF states using pre-computed rotations.
+    fn teme_to_ecef(teme_states: Vec<TemeState>, rotations: &HashMap<DateTime<Utc>, (f64, f64)>) -> Vec<EcefState> {
         teme_states
             .into_iter()
             .map(|s| {
-                let gmst_rad = gmst(&s.date).to_radians();
-                let ecef = rotate_z(&s.position, -gmst_rad);
-                let vel = rotate_z(&s.velocity, -gmst_rad);
+                let &(s_ang, c_ang) = rotations.get(&s.date).unwrap();
+                let ecef = rotate_z_sc(&s.position, s_ang, c_ang);
+                let vel = rotate_z_sc(&s.velocity, s_ang, c_ang);
                 EcefState {
                     name: s.name,
                     date: s.date,
@@ -310,6 +310,14 @@ impl CatalogueClient {
                 }
             })
             .collect()
+    }
+
+    /// Pre-compute GMST rotation (sin, cos) for each date.
+    fn precompute_rotations(dates: &[DateTime<Utc>]) -> HashMap<DateTime<Utc>, (f64, f64)> {
+        dates.iter().map(|d| {
+            let ang = -gmst(d).to_radians();
+            (*d, ang.sin_cos())
+        }).collect()
     }
 
     /// Compute ECEF positions for a list of dates (primary computation).
@@ -321,8 +329,9 @@ impl CatalogueClient {
         let tles = self.fetch_tles(query_date).await?;
         let cache_key = cache::cache_key(query_date);
         let propagators = self.get_propagators(&cache_key, &tles);
+        let rotations = Self::precompute_rotations(dates);
         let teme_states = Self::propagate_tles(&propagators, dates);
-        Ok(Self::teme_to_ecef(teme_states))
+        Ok(Self::teme_to_ecef(teme_states, &rotations))
     }
 
     /// Return ECEF positions (km) and velocities (km/s) for all satellites.
@@ -367,11 +376,19 @@ impl CatalogueClient {
         dates: &[DateTime<Utc>],
     ) -> Result<Vec<CelestialPosition>, Box<dyn Error>> {
         let states = self._propagate_ecef(query_date, dates).await?;
+        // Pre-compute reverse rotations (ECEF -> inertial)
+        let rev_rotations: HashMap<DateTime<Utc>, (f64, f64)> = dates
+            .iter()
+            .map(|d| {
+                let ang = gmst(d).to_radians();
+                (*d, ang.sin_cos())
+            })
+            .collect();
         Ok(states
             .into_iter()
             .map(|s| {
-                let gmst_rad = gmst(&s.date).to_radians();
-                let inertial = rotate_z(&s.position, gmst_rad);
+                let &(s_ang, c_ang) = rev_rotations.get(&s.date).unwrap();
+                let inertial = rotate_z_sc(&s.position, s_ang, c_ang);
                 let r = (inertial[0].powi(2) + inertial[1].powi(2) + inertial[2].powi(2)).sqrt();
                 let ra = inertial[1].atan2(inertial[0]);
                 let dec = (inertial[2] / r).asin();
@@ -394,9 +411,8 @@ impl CatalogueClient {
     }
 }
 
-/// Rotate a 3-vector around the Z axis by `angle` radians.
-fn rotate_z(v: &[f64; 3], angle: f64) -> [f64; 3] {
-    let (s, c) = angle.sin_cos();
+/// Rotate a 3-vector around the Z axis using pre-computed (sin, cos).
+fn rotate_z_sc(v: &[f64; 3], s: f64, c: f64) -> [f64; 3] {
     [v[0] * c - v[1] * s, v[0] * s + v[1] * c, v[2]]
 }
 
