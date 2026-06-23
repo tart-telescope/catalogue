@@ -1,5 +1,5 @@
 [package]
-name = "tart-catalogue"
+name = "tart-catalogue-client"
 version = "0.3.0"
 edition = "2024"
 description = "Rust client for the TART catalogue /ephemerides endpoint"
