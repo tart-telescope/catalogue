@@ -26,6 +26,7 @@ from astropy.utils import iers
 from sgp4.api import Satrec, jday
 
 iers.conf.auto_download = False
+iers.conf.auto_max_age = None
 
 CACHE_DIR = pathlib.Path.home() / ".cache" / "tart-catalogue"
 MAX_CACHE_ENTRIES = 100
