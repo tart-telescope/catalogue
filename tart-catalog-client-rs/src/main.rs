@@ -760,4 +760,18 @@ mod tests {
         assert!((el - 90.0).abs() < 0.1, "el={}", el);
         assert!((rng - 2000.0).abs() < 1.0, "rng={}", rng);
     }
+
+    #[test]
+    fn test_tle_record_flux() {
+        let json = r#"{"name":"TEST","line1":"","line2":"","jy":2500000.0}"#;
+        let rec: TleRecord = serde_json::from_str(json).unwrap();
+        assert!((rec.jy - 2500000.0).abs() < 1.0, "jy={}", rec.jy);
+    }
+
+    #[test]
+    fn test_tle_record_flux_default() {
+        let json = r#"{"name":"TEST","line1":"","line2":""}"#;
+        let rec: TleRecord = serde_json::from_str(json).unwrap();
+        assert!((rec.jy - 0.0).abs() < 1.0, "jy={}", rec.jy);
+    }
 }

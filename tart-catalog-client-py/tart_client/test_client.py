@@ -127,3 +127,59 @@ def test_horizontal_vs_test_vectors():
             )
     finally:
         client.fetch_tles = original_fetch
+
+
+# TLE with known flux value
+FLUX_TLE = {"name": "TEST", "line1": GPS_TLE["line1"], "line2": GPS_TLE["line2"], "jy": 2500000.0}
+
+
+def test_ecef_includes_flux():
+    """ECEF output should include jy from the server response."""
+    client = CatalogueClient()
+    original_fetch = client.fetch_tles
+    client.fetch_tles = lambda dt=None: [FLUX_TLE]
+    try:
+        result = client.ecef_positions(dt=_parse_date(VECTORS["dates"][0]["date"]))
+        assert result[0]["jy"] == 2500000.0, f"Expected 2500000.0, got {result[0].get('jy')}"
+    finally:
+        client.fetch_tles = original_fetch
+
+
+def test_celestial_includes_flux():
+    """Celestial output should include jy from the server response."""
+    client = CatalogueClient()
+    original_fetch = client.fetch_tles
+    client.fetch_tles = lambda dt=None: [FLUX_TLE]
+    try:
+        result = client.celestial_positions(dt=_parse_date(VECTORS["dates"][0]["date"]))
+        assert result[0]["jy"] == 2500000.0
+    finally:
+        client.fetch_tles = original_fetch
+
+
+def test_horizontal_includes_flux():
+    """Horizontal output should include jy from the server response."""
+    client = CatalogueClient()
+    original_fetch = client.fetch_tles
+    client.fetch_tles = lambda dt=None: [FLUX_TLE]
+    observer = VECTORS["observer"]
+    try:
+        result = client.horizontal_positions(
+            lat=observer["lat_deg"], lon=observer["lon_deg"], alt=observer["alt_m"],
+            dt=_parse_date(VECTORS["dates"][0]["date"]),
+        )
+        assert result[0]["jy"] == 2500000.0
+    finally:
+        client.fetch_tles = original_fetch
+
+
+def test_flux_defaults_to_zero():
+    """When server omits jy, it should default to 0.0."""
+    client = CatalogueClient()
+    original_fetch = client.fetch_tles
+    client.fetch_tles = lambda dt=None: [GPS_TLE]  # no jy key
+    try:
+        result = client.ecef_positions(dt=_parse_date(VECTORS["dates"][0]["date"]))
+        assert result[0].get("jy", None) == 0.0, f"Expected 0.0, got {result[0].get('jy')}"
+    finally:
+        client.fetch_tles = original_fetch
