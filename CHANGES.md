@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.5.0
+
+### Added
+- `min_elevation` and `name_regex` filter parameters to `horizontal_positions()` in both clients
+- Server: flux data loaded from `flux.json`, included as `jy` field in `/ephemerides` response
+- Server: bug fixes (Pydantic v2 deprecation, /position error handler, stale debug log)
+
 ## v0.4.1
 
 ### Added

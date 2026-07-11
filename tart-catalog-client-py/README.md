@@ -18,13 +18,16 @@ uv run python -m tart_client.cli ecef
 # Celestial (RA/Dec) positions
 uv run python -m tart_client.cli celestial
 
+# Horizontal (Az/El) positions
+uv run python -m tart_client.cli horizontal
+
+# Benchmark (default 1000 queries over last week)
+uv run python -m tart_client.cli benchmark 5000
+
 # Custom server and date
 uv run python -m tart_client.cli ecef \
   --url http://localhost:8876 \
   --date 2026-06-16T12:00:00Z
-
-# Benchmark (default 1000 queries over last week)
-uv run python -m tart_client.cli benchmark 5000
 ```
 
 Set `TART_CATALOGUE_URL` to avoid repeating `--url`:
@@ -95,9 +98,11 @@ Transform: ECEF → ITRS → ICRS (via astropy).
 
 ```python
 positions = client.horizontal_positions(
-    lat=-45.87,     # observer latitude (degrees)
-    lon=170.60,     # observer longitude (degrees)
-    alt=100.0,      # observer altitude (meters)
+    lat=-45.87,       # observer latitude (degrees)
+    lon=170.60,       # observer longitude (degrees)
+    alt=100.0,        # observer altitude (meters)
+    min_elevation=10,  # min elevation to include (default -90 = all)
+    name_regex="GPS",  # optional regex to filter by name (default None)
 )
 ```
 

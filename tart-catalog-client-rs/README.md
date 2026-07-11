@@ -18,11 +18,14 @@ cargo run --release
 # Celestial (RA/Dec) positions
 cargo run --release -- celestial
 
-# Override server (defaults to https://tart.elec.ac.nz/catalog)
-TART_CATALOGUE_URL=http://localhost:8876 cargo run --release
+# Horizontal (Az/El) positions
+cargo run --release -- horizontal
 
 # Benchmark (default 1000 queries)
 cargo run --release -- benchmark 5000
+
+# Override server (defaults to https://tart.elec.ac.nz/catalog)
+TART_CATALOGUE_URL=http://localhost:8876 cargo run --release
 ```
 
 Progress and warnings go to stderr. Pipe stdout for clean JSON:
@@ -96,6 +99,8 @@ let positions: Vec<HorizontalPosition> = client.horizontal_positions(
     -45.87,     // observer latitude (degrees)
     170.60,     // observer longitude (degrees)
     100.0,      // observer altitude (meters)
+    10.0,       // min_elevation (degrees, default -90 = all)
+    &None,      // name_regex (optional filter)
 ).await?;
 ```
 
