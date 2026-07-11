@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.5.1
+
+### Fixed
+- Python client: prevent astropy from attempting IERS table downloads
+  (`iers.conf.auto_max_age = None` alongside `auto_download = False`)
+
 ## v0.5.0
 
 ### Added

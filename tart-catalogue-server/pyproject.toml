@@ -1,6 +1,6 @@
 [project]
 name = "tart_catalogue"
-version = "0.5.0"
+version = "0.5.1"
 description = "TART Source Catalogue"
 authors = [
     {name = "Tim Molteno",email = "tim@elec.ac.nz"}

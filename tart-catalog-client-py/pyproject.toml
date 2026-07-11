@@ -1,6 +1,6 @@
 [project]
 name = "tart-catalogue-client"
-version = "0.5.0"
+version = "0.5.1"
 description = "Python client for the TART catalogue ephemerides endpoint"
 authors = [
     {name = "Tim Molteno", email = "tim@elec.ac.nz"},
