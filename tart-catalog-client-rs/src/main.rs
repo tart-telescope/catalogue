@@ -397,6 +397,10 @@ impl CatalogueClient {
     }
 
     /// Return horizontal (Az/El) positions for a given observer location.
+    ///
+    /// `lat_deg`, `lon_deg` in degrees, `alt_m` in meters.
+    /// `min_el` filters satellites below this elevation (default -90 = all).
+    /// `name_pattern` is an optional regex to filter satellite names.
     async fn horizontal_positions(
         &mut self,
         query_date: &DateTime<Utc>,
@@ -404,6 +408,8 @@ impl CatalogueClient {
         lat_deg: f64,
         lon_deg: f64,
         alt_m: f64,
+        min_el: f64,
+        name_pattern: &Option<regex::Regex>,
     ) -> Result<Vec<HorizontalPosition>, Box<dyn Error>> {
         let states = self._propagate_ecef(query_date, dates).await?;
 
@@ -412,7 +418,7 @@ impl CatalogueClient {
 
         Ok(states
             .into_iter()
-            .map(|s| {
+            .filter_map(|s| {
                 let dx = s.position[0] - obs_x;
                 let dy = s.position[1] - obs_y;
                 let dz = s.position[2] - obs_z;
@@ -427,17 +433,26 @@ impl CatalogueClient {
                 let u = clat * clon * dx + clat * slon * dy + slat * dz;
 
                 let rng = (e * e + n * n + u * u).sqrt();
-                let az = e.atan2(n).to_degrees().rem_euclid(360.0);
+                let _az = e.atan2(n).to_degrees().rem_euclid(360.0);
                 let el = (u / rng).asin().to_degrees();
 
-                HorizontalPosition {
+                if el < min_el {
+                    return None;
+                }
+                if let Some(re) = name_pattern {
+                    if !re.is_match(&s.name) {
+                        return None;
+                    }
+                }
+
+                Some(HorizontalPosition {
                     name: s.name,
                     date: s.date.to_rfc3339(),
-                    azimuth_deg: round(az, 6),
+                    azimuth_deg: round(_az, 6),
                     elevation_deg: round(el, 6),
                     range_km: round(rng, 3),
                     jy: s.jy,
-                }
+                })
             })
             .collect())
     }
@@ -576,7 +591,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             println!("{}", serde_json::to_string_pretty(&positions)?);
         }
         "horizontal" | "azel" | "az" => {
-            let positions = client.horizontal_positions(&now, &dates, -45.87, 170.60, 100.0).await?;
+            let positions = client.horizontal_positions(&now, &dates, -45.87, 170.60, 100.0, -90.0, &None::<regex::Regex>).await?;
             println!("{}", serde_json::to_string_pretty(&positions)?);
         }
         "benchmark" | "bench" => {

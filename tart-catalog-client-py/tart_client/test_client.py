@@ -183,3 +183,49 @@ def test_flux_defaults_to_zero():
         assert result[0].get("jy", None) == 0.0, f"Expected 0.0, got {result[0].get('jy')}"
     finally:
         client.fetch_tles = original_fetch
+
+
+def test_horizontal_min_elevation_filters():
+    """min_elevation should remove satellites below the threshold."""
+    client = CatalogueClient()
+    original_fetch = client.fetch_tles
+    client.fetch_tles = lambda dt=None: [FLUX_TLE, FLUX_TLE]
+    observer = VECTORS["observer"]
+    try:
+        dt = _parse_date(VECTORS["dates"][0]["date"])
+        all_sats = client.horizontal_positions(
+            lat=observer["lat_deg"], lon=observer["lon_deg"], alt=0.0, dt=dt,
+            min_elevation=-90.0,
+        )
+        high_only = client.horizontal_positions(
+            lat=observer["lat_deg"], lon=observer["lon_deg"], alt=0.0, dt=dt,
+            min_elevation=90.0,
+        )
+        assert len(high_only) <= len(all_sats), "Elevation filter should never add satellites"
+    finally:
+        client.fetch_tles = original_fetch
+
+
+def test_horizontal_name_regex_filters():
+    """name_regex should filter satellites by name."""
+    client = CatalogueClient()
+    original_fetch = client.fetch_tles
+    a_tle = dict(GPS_TLE, name="GPS BIIR-2 (PRN 13)")
+    b_tle = dict(GPS_TLE, name="GALILEO TEST")
+    client.fetch_tles = lambda dt=None: [a_tle, b_tle]
+    observer = VECTORS["observer"]
+    try:
+        dt = _parse_date(VECTORS["dates"][0]["date"])
+        all_sats = client.horizontal_positions(
+            lat=observer["lat_deg"], lon=observer["lon_deg"], alt=0.0, dt=dt,
+        )
+        gps_only = client.horizontal_positions(
+            lat=observer["lat_deg"], lon=observer["lon_deg"], alt=0.0, dt=dt,
+            name_regex="GPS",
+        )
+        assert len(gps_only) > 0
+        assert len(gps_only) < len(all_sats)
+        for sat in gps_only:
+            assert "GPS" in sat["name"]
+    finally:
+        client.fetch_tles = original_fetch

@@ -234,6 +234,8 @@ class CatalogueClient:
         lon: float,
         alt: float = 0.0,
         dt: Optional[datetime.datetime] = None,
+        min_elevation: float = -90.0,
+        name_regex: Optional[str] = None,
     ) -> List[Dict]:
         """Return horizontal (Az/El) positions for all satellites.
 
@@ -242,10 +244,14 @@ class CatalogueClient:
             lon: Observer longitude in degrees.
             alt: Observer altitude in meters.
             dt: UTC datetime (default: now).
+            min_elevation: Minimum elevation in degrees (satellites below are filtered).
+            name_regex: Optional regex pattern to filter by satellite name.
 
-        Returns list of dicts with: name, azimuth_deg, elevation_deg, range_km.
+        Returns list of dicts with: name, azimuth_deg, elevation_deg, range_km, jy.
         """
+        import re
         ecef_list = self.ecef_positions(dt)
+        pattern = re.compile(name_regex) if name_regex else None
 
         lat_rad = np.radians(lat)
         lon_rad = np.radians(lon)
@@ -275,6 +281,12 @@ class CatalogueClient:
             rng = np.sqrt(e * e + n * n + u * u)
             az = np.degrees(np.arctan2(e, n)) % 360.0
             el = np.degrees(np.arcsin(u / rng))
+
+            # Apply filters
+            if el < min_elevation:
+                continue
+            if pattern is not None and not pattern.search(sat["name"]):
+                continue
 
             results.append(
                 {
