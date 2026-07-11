@@ -18,6 +18,7 @@ from tart.util import angle, utc
 # norad_cache -> file_cache and sun_object need it (circular import).
 import tart_catalogue.sky_object  # noqa: F401
 from tart_catalogue import norad_cache, sun_object
+from tart_catalogue import flux_data as flux_module
 
 # Global cache objects - initialized at startup
 waas_cache = None
@@ -25,6 +26,7 @@ gps_cache = None
 galileo_cache = None
 beidou_cache = None
 sun = None
+flux_table = None
 
 # Setup logging
 logger = logging.getLogger("catalog")
@@ -49,7 +51,7 @@ if not logger.handlers:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize caches on startup"""
-    global waas_cache, gps_cache, galileo_cache, beidou_cache, sun
+    global waas_cache, gps_cache, galileo_cache, beidou_cache, sun, flux_table
 
     logger.info("Initializing caches...")
     waas_cache = norad_cache.NORADCache()
@@ -57,6 +59,7 @@ async def lifespan(app: FastAPI):
     galileo_cache = norad_cache.GalileoCache()
     beidou_cache = norad_cache.BeidouCache()
     sun = sun_object.SunObject()
+    flux_table = flux_module.load_flux_data()
     logger.info("Caches initialized successfully")
     yield
     logger.info("Shutdown completed.")
@@ -156,7 +159,6 @@ async def get_catalog(
     """
 
     try:
-        logger.info("Hi")
         parsed_date = parse_date(date)
         lat_angle = angle.from_dms(lat)
         lon_angle = angle.from_dms(lon)
@@ -199,7 +201,7 @@ async def get_position(
         logger.error(f"Error in get_position: {err}")
         tb = traceback.format_exc()
         logger.error(f"Traceback: {tb}")
-        return {"error": f"Exception: {err}", "traceback": tb.split("\n")}
+        raise HTTPException(status_code=500, detail=f"Exception: {err}")
 
 
 # 1. Define the Pydantic model for the request body.
@@ -229,7 +231,7 @@ def get_bulk_az_el_fastapi(request_data: BulkAzElRequest):
         alt_param = request_data.alt
         dates_param = request_data.dates
 
-        print(f"Request data: {request_data.dict()}")
+        print(f"Request data: {request_data.model_dump()}")
 
         lat = angle.from_dms(lat_param)
         lon = angle.from_dms(lon_param)
@@ -262,7 +264,7 @@ def get_bulk_az_el_fastapi(request_data: BulkAzElRequest):
             detail={
                 "error": str(err),
                 "traceback": tb.split("\n"),
-                "param": request_data.dict(),
+                "param": request_data.model_dump(),
             },
         )
 
@@ -274,17 +276,17 @@ async def get_ephemerides(
     ),
 ) -> List[Dict[str, Any]]:
     """
-    Return ephemerides (ECEF position and velocity) for all known
-    satellite constellations at a given date.
+    Return raw TLE data for all known satellite constellations
+    at a given date. Includes flux (jy) for each satellite.
     """
-    global waas_cache, gps_cache, galileo_cache, beidou_cache
+    global waas_cache, gps_cache, galileo_cache, beidou_cache, flux_table
 
     catalogue_sources = [waas_cache, gps_cache, galileo_cache, beidou_cache]
     try:
         parsed_date = parse_date(date)
         ret = []
         for src in catalogue_sources:
-            ret += src.get_ephemeris_data(parsed_date)
+            ret += src.get_ephemeris_data(parsed_date, flux_data=flux_table)
         return ret
     except HTTPException:
         raise

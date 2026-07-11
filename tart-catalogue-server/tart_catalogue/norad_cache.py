@@ -22,13 +22,24 @@ class Sp4Ephemeris:
         self.line1 = line1
         self.line2 = line2
 
-    def to_dict(self):
+    @property
+    def satcat(self):
+        """NORAD catalog number from TLE line 1."""
+        try:
+            return int(self.line1[2:7].strip())
+        except (ValueError, IndexError):
+            return None
+
+    def to_dict(self, jy=None):
         """Serialize the raw TLE data for client-side position calculation."""
-        return {
+        d = {
             "name": self.name,
             "line1": self.line1,
             "line2": self.line2,
         }
+        if jy is not None:
+            d["jy"] = jy
+        return d
 
     def get_position(self, date):
         position, velocity = self.sv.propagate(
@@ -82,10 +93,17 @@ class Sp4Ephemerides:
             ret.append({"name": sv.name, "ecef": p, "ecef_dot": v, "jy": self.jansky})
         return ret
 
-    def get_ephemeris_data(self):
+    def get_ephemeris_data(self, flux_data=None):
         """Return raw TLE data for all satellites so clients can
         compute positions themselves."""
-        return [sv.to_dict() for sv in self.satellites]
+        result = []
+        for sv in self.satellites:
+            jy = self.jansky
+            if flux_data is not None and sv.satcat is not None:
+                from tart_catalogue.flux_data import get_flux
+                jy = get_flux(sv.satcat, flux_data)
+            result.append(sv.to_dict(jy=jy))
+        return result
 
     def get_az_el(self, date, lat, lon, alt, elevation):
         ret = []
@@ -124,9 +142,9 @@ class EphemerisFileCache(file_cache.FileCache):
         ret = eph.get_positions(date)
         return ret
 
-    def get_ephemeris_data(self, date):
+    def get_ephemeris_data(self, date, flux_data=None):
         eph = self.get_object(date)
-        return eph.get_ephemeris_data()
+        return eph.get_ephemeris_data(flux_data=flux_data)
 
     def get_az_el(self, date, lat, lon, alt, elevation):
         eph = self.get_object(date)

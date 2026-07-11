@@ -1,0 +1,4 @@
+{
+  "default": 1500000.0,
+  "_comment": "Flux values in Janskys. Keyed by NORAD catalog number. default is used when satellite not listed."
+}
