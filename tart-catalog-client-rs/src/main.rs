@@ -12,6 +12,8 @@ struct TleRecord {
     name: String,
     line1: String,
     line2: String,
+    #[serde(default)]
+    jy: f64,
 }
 
 /// SGP4 prediction in TEME (km, km/s).
@@ -21,10 +23,11 @@ struct TemeState {
     date: DateTime<Utc>,
     position: [f64; 3],
     velocity: [f64; 3],
+    jy: f64,
 }
 
-/// Pre-parsed propagator: (name, Constants, epoch_days).
-type CachedPropagator = (String, Constants, f64);
+/// Pre-parsed propagator: (name, Constants, epoch_days, jy).
+type CachedPropagator = (String, Constants, f64, f64);
 
 /// Raw ECEF position with datetime for further transforms.
 #[derive(Debug)]
@@ -33,6 +36,7 @@ struct EcefState {
     date: DateTime<Utc>,
     position: [f64; 3],
     velocity: [f64; 3],
+    jy: f64,
 }
 
 /// ECEF position and velocity (serializable).
@@ -42,6 +46,7 @@ struct EcefPosition {
     date: String,
     ecef_km: [f64; 3],
     velocity_km_s: [f64; 3],
+    jy: f64,
 }
 
 /// Horizontal (Az/El) position.
@@ -52,6 +57,7 @@ struct HorizontalPosition {
     azimuth_deg: f64,
     elevation_deg: f64,
     range_km: f64,
+    jy: f64,
 }
 
 /// Celestial (RA/Dec) position.
@@ -62,6 +68,7 @@ struct CelestialPosition {
     ra_hours: f64,
     dec_degrees: f64,
     distance_km: f64,
+    jy: f64,
 }
 
 /// Local cache of ephemerides in ~/.cache/tart-catalogue/
@@ -264,7 +271,7 @@ impl CatalogueClient {
                 Ok(c) => c,
                 Err(_) => continue,
             };
-            propagators.push((tle.name.clone(), constants, epoch));
+            propagators.push((tle.name.clone(), constants, epoch, tle.jy));
         }
 
         self.propagator_cache
@@ -280,7 +287,7 @@ impl CatalogueClient {
         let mut results = Vec::new();
         let mut skipped = 0u32;
 
-        for (name, constants, tle_epoch_days) in propagators {
+        for (name, constants, tle_epoch_days, jy) in propagators {
             let tle_epoch_days = *tle_epoch_days;
 
             for date in dates {
@@ -301,6 +308,7 @@ impl CatalogueClient {
                     date: *date,
                     position: prediction.position,
                     velocity: prediction.velocity,
+                    jy: *jy,
                 });
             }
         }
@@ -322,6 +330,7 @@ impl CatalogueClient {
                     date: s.date,
                     position: ecef,
                     velocity: vel,
+                    jy: s.jy,
                 }
             })
             .collect()
@@ -358,19 +367,22 @@ impl CatalogueClient {
         let states = self._propagate_ecef(query_date, dates).await?;
         Ok(states
             .into_iter()
-            .map(|s| EcefPosition {
-                name: s.name,
-                date: s.date.to_rfc3339(),
-                ecef_km: [
-                    round(s.position[0], 6),
-                    round(s.position[1], 6),
-                    round(s.position[2], 6),
-                ],
-                velocity_km_s: [
-                    round(s.velocity[0], 6),
-                    round(s.velocity[1], 6),
-                    round(s.velocity[2], 6),
-                ],
+            .map(|s| {
+                EcefPosition {
+                    name: s.name,
+                    date: s.date.to_rfc3339(),
+                    ecef_km: [
+                        round(s.position[0], 6),
+                        round(s.position[1], 6),
+                        round(s.position[2], 6),
+                    ],
+                    velocity_km_s: [
+                        round(s.velocity[0], 6),
+                        round(s.velocity[1], 6),
+                        round(s.velocity[2], 6),
+                    ],
+                    jy: s.jy,
+                }
             })
             .collect())
     }
@@ -424,6 +436,7 @@ impl CatalogueClient {
                     azimuth_deg: round(az, 6),
                     elevation_deg: round(el, 6),
                     range_km: round(rng, 3),
+                    jy: s.jy,
                 }
             })
             .collect())
@@ -458,6 +471,7 @@ impl CatalogueClient {
                     ra_hours: round(ra.to_degrees() / 15.0, 6),
                     dec_degrees: round(dec.to_degrees(), 6),
                     distance_km: round(r, 1),
+                    jy: s.jy,
                 }
             })
             .collect())

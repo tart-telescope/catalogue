@@ -152,8 +152,8 @@ class CatalogueClient:
         _save_tle_cache(dt_hour, records)
         return records
 
-    def _get_satellites(self, dt: datetime.datetime) -> List[Tuple[str, Satrec]]:
-        """Return pre-parsed satellite objects (in-memory cached)."""
+    def _get_satellites(self, dt: datetime.datetime) -> List[Tuple[str, Satrec, float]]:
+        """Return pre-parsed satellite objects with flux (in-memory cached)."""
         key = _cache_key(dt)
         if key in self._sat_cache:
             return self._sat_cache[key]
@@ -164,7 +164,8 @@ class CatalogueClient:
         for tle in tles:
             try:
                 sat = Satrec.twoline2rv(tle["line1"], tle["line2"])
-                sats.append((tle["name"], sat))
+                jy = tle.get("jy", 0.0)
+                sats.append((tle["name"], sat, jy))
             except Exception:
                 continue
 
@@ -183,7 +184,7 @@ class CatalogueClient:
         s, c = np.sin(ang), np.cos(ang)
 
         results = []
-        for name, sat in sats:
+        for name, sat, jy in sats:
             e, pos, vel = sat.sgp4(jd, fr)
             if e != 0:
                 continue
@@ -199,6 +200,7 @@ class CatalogueClient:
             results.append(
                 {
                     "name": name,
+                    "jy": jy,
                     "ecef_km": [
                         round(ecef_x, 6),
                         round(ecef_y, 6),
@@ -277,6 +279,7 @@ class CatalogueClient:
             results.append(
                 {
                     "name": sat["name"],
+                    "jy": sat.get("jy", 0.0),
                     "azimuth_deg": round(az, 6),
                     "elevation_deg": round(el, 6),
                     "range_km": round(rng, 3),
@@ -314,6 +317,7 @@ class CatalogueClient:
             results.append(
                 {
                     "name": sat["name"],
+                    "jy": sat.get("jy", 0.0),
                     "ra_hours": round(icrs.ra.to(u.hourangle).value, 6),
                     "dec_degrees": round(icrs.dec.to(u.deg).value, 6),
                     "distance_km": round(r, 1),
