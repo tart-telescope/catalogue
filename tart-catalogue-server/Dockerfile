@@ -23,4 +23,6 @@ RUN uv sync --no-dev --frozen
 ENV UVICORN_HOST="0.0.0.0"
 ENV UVICORN_PORT="8876"
 
-CMD uv run uvicorn tart_catalogue.main:app
+ENV UVICORN_ROOT_PATH="/catalog"
+
+CMD uv run uvicorn tart_catalogue.main:app --root-path ${UVICORN_ROOT_PATH}

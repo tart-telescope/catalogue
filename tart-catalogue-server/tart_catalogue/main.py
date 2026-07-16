@@ -68,13 +68,11 @@ async def lifespan(app: FastAPI):
 # Initialize the FastAPI app
 import os
 
-root_path = os.environ.get("UVICORN_ROOT_PATH", "/catalog")
 app = FastAPI(
     lifespan=lifespan,
     title="Object Position Server REST API",
     description="API to provide a catalog of known objects",
     version="0.0.1",
-    root_path=root_path,
     docs_url="/docs",
     redoc_url="/redoc",
 )
