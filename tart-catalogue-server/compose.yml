@@ -7,8 +7,8 @@ services:
     build:
       context: .
     restart: unless-stopped
-    # environment:
-    #     - UVICORN_ROOT_PATH="/catalog"
+    environment:
+        - UVICORN_ROOT_PATH="/catalog"
 
     volumes:
       - ~/catalog_cache:/object_position_server/orbit_data
