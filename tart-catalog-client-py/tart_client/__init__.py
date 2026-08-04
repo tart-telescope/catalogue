@@ -227,6 +227,10 @@ class CatalogueClient:
 
     def count_satellites(self, dt: Optional[datetime.datetime] = None) -> int:
         """Return the number of satellites available at the given date."""
+        if dt is None:
+            dt = datetime.datetime.now(datetime.timezone.utc)
+        elif dt.tzinfo is None:
+            dt = dt.replace(tzinfo=datetime.timezone.utc)
         return len(self._get_satellites(dt))
 
     def horizontal_positions(

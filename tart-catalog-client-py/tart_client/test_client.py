@@ -100,6 +100,32 @@ def test_count_satellites():
         client.fetch_tles = original_fetch
 
 
+def test_count_satellites_with_default_date():
+    """count_satellites() with dt=None should not crash."""
+    client = CatalogueClient()
+    original_fetch = client.fetch_tles
+    client.fetch_tles = lambda dt=None: [GPS_TLE, GPS_TLE, GPS_TLE]
+    try:
+        count = client.count_satellites()
+        assert count == 3, f"Expected 3, got {count}"
+        assert isinstance(count, int)
+    finally:
+        client.fetch_tles = original_fetch
+
+
+def test_count_satellites_with_explicit_date():
+    """count_satellites() with an explicit date should work."""
+    client = CatalogueClient()
+    original_fetch = client.fetch_tles
+    client.fetch_tles = lambda dt=None: [GPS_TLE, GPS_TLE]
+    try:
+        dt = _parse_date(VECTORS["dates"][0]["date"])
+        count = client.count_satellites(dt=dt)
+        assert count == 2, f"Expected 2, got {count}"
+    finally:
+        client.fetch_tles = original_fetch
+
+
 def test_horizontal_vs_test_vectors():
     """Our horizontal (Az/El) should match astropy AltAz reference."""
     client = CatalogueClient()

@@ -37,10 +37,7 @@ class FileCache(sky_object.SkyObject):
         pass
 
     def download_file(self, url, local_file):
-        try:
-            os.makedirs(os.path.dirname(local_file))
-        except Exception:
-            pass
+        os.makedirs(os.path.dirname(local_file), exist_ok=True)
         try:
             if url in self.last_download_attempt:
                 print(f"Download Attempt: {self.last_download_attempt}")
@@ -64,8 +61,14 @@ class FileCache(sky_object.SkyObject):
             self.last_download_attempt[url] = datetime.datetime.now()
             raise (err)
 
-    def get_object(self, date):
+    def get_object(self, date, _depth=0):
         utc_date = utc.to_utc(date)
+
+        if _depth >= 5:
+            raise RuntimeError(
+                f"Failed to get object for {self.name} after {_depth} retries "
+                f"(earliest date tried: {date.isoformat()})"
+            )
 
         fname = self.get_local_filename(utc_date)
         if fname in self.cache:
@@ -84,4 +87,4 @@ class FileCache(sky_object.SkyObject):
             tb = traceback.format_exc()
             logging.error(tb)
             logging.error("Something went wrong. Using old orbit information")
-            return self.get_object(date - datetime.timedelta(days=1))
+            return self.get_object(date - datetime.timedelta(days=1), _depth=_depth + 1)

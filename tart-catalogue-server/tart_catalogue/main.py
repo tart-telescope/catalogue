@@ -257,6 +257,10 @@ def get_bulk_az_el_fastapi(request_data: BulkAzElRequest):
         # so there's no need for `jsonify()`.
         return res
 
+    except HTTPException:
+        # Let HTTPException pass through so invalid/future dates return a
+        # 400 (from parse_date) instead of being re-wrapped as a 500.
+        raise
     except Exception as err:
         # Use a more explicit HTTPException for API errors.
         # This will return a proper JSON error response with a 500 status code.

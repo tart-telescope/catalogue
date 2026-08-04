@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.5.2
+
+### Fixed
+- Server `/bulk_az_el`: invalid or >24h-future dates now return HTTP 400 instead
+  of being re-wrapped as a 500 error
+- Server `FileCache`: `get_object()` recursion on repeated download failure is
+  now bounded (raises `RuntimeError` after 5 days of fallback); `os.makedirs()`
+  uses `exist_ok=True` instead of silently swallowing errors
+- Python client: `count_satellites()` with no `dt` argument no longer crashes
+- Rust client: celestial Right Ascension is normalized to the [0, 24) hour range
+  (was emitting negative values for roughly half of satellites); replaced
+  panic-prone `.unwrap()` map lookups with descriptive errors
+
 ## v0.5.1
 
 ### Fixed

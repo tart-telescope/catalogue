@@ -318,22 +318,26 @@ impl CatalogueClient {
     }
 
     /// Convert TEME states to ECEF states using pre-computed rotations.
-    fn teme_to_ecef(teme_states: Vec<TemeState>, rotations: &HashMap<DateTime<Utc>, (f64, f64)>) -> Vec<EcefState> {
-        teme_states
-            .into_iter()
-            .map(|s| {
-                let &(s_ang, c_ang) = rotations.get(&s.date).unwrap();
-                let ecef = rotate_z_sc(&s.position, s_ang, c_ang);
-                let vel = rotate_z_sc(&s.velocity, s_ang, c_ang);
-                EcefState {
-                    name: s.name,
-                    date: s.date,
-                    position: ecef,
-                    velocity: vel,
-                    jy: s.jy,
-                }
-            })
-            .collect()
+    fn teme_to_ecef(
+        teme_states: Vec<TemeState>,
+        rotations: &HashMap<DateTime<Utc>, (f64, f64)>,
+    ) -> Result<Vec<EcefState>, Box<dyn Error>> {
+        let mut ecef_states = Vec::with_capacity(teme_states.len());
+        for s in teme_states {
+            let &(s_ang, c_ang) = rotations.get(&s.date).ok_or_else(|| {
+                format!("no rotation cached for {}", s.date.to_rfc3339())
+            })?;
+            let ecef = rotate_z_sc(&s.position, s_ang, c_ang);
+            let vel = rotate_z_sc(&s.velocity, s_ang, c_ang);
+            ecef_states.push(EcefState {
+                name: s.name,
+                date: s.date,
+                position: ecef,
+                velocity: vel,
+                jy: s.jy,
+            });
+        }
+        Ok(ecef_states)
     }
 
     /// Pre-compute GMST rotation (sin, cos) for each date.
@@ -355,7 +359,7 @@ impl CatalogueClient {
         let propagators = self.get_propagators(&cache_key, &tles);
         let rotations = Self::precompute_rotations(dates);
         let teme_states = Self::propagate_tles(&propagators, dates);
-        Ok(Self::teme_to_ecef(teme_states, &rotations))
+        Self::teme_to_ecef(teme_states, &rotations)
     }
 
     /// Return ECEF positions (km) and velocities (km/s) for all satellites.
@@ -472,24 +476,25 @@ impl CatalogueClient {
                 (*d, ang.sin_cos())
             })
             .collect();
-        Ok(states
-            .into_iter()
-            .map(|s| {
-                let &(s_ang, c_ang) = rev_rotations.get(&s.date).unwrap();
-                let inertial = rotate_z_sc(&s.position, s_ang, c_ang);
-                let r = (inertial[0].powi(2) + inertial[1].powi(2) + inertial[2].powi(2)).sqrt();
-                let ra = inertial[1].atan2(inertial[0]);
-                let dec = (inertial[2] / r).asin();
-                CelestialPosition {
-                    name: s.name,
-                    date: s.date.to_rfc3339(),
-                    ra_hours: round(ra.to_degrees() / 15.0, 6),
-                    dec_degrees: round(dec.to_degrees(), 6),
-                    distance_km: round(r, 1),
-                    jy: s.jy,
-                }
-            })
-            .collect())
+
+        let mut results = Vec::with_capacity(states.len());
+        for s in states {
+            let &(s_ang, c_ang) = rev_rotations.get(&s.date).ok_or_else(|| {
+                format!("no rotation cached for {}", s.date.to_rfc3339())
+            })?;
+            let inertial = rotate_z_sc(&s.position, s_ang, c_ang);
+            let r = (inertial[0].powi(2) + inertial[1].powi(2) + inertial[2].powi(2)).sqrt();
+            let ra = inertial[1].atan2(inertial[0]);
+            results.push(CelestialPosition {
+                name: s.name,
+                date: s.date.to_rfc3339(),
+                ra_hours: round(ra_hours(ra), 6),
+                dec_degrees: round(dec_from_rad(inertial[2] / r), 6),
+                distance_km: round(r, 1),
+                jy: s.jy,
+            });
+        }
+        Ok(results)
     }
 
     /// Convert a `DateTime<Utc>` to days since 1949-12-31 00:00 UT (sgp4 epoch).
@@ -503,6 +508,18 @@ impl CatalogueClient {
 /// Rotate a 3-vector around the Z axis using pre-computed (sin, cos).
 fn rotate_z_sc(v: &[f64; 3], s: f64, c: f64) -> [f64; 3] {
     [v[0] * c - v[1] * s, v[0] * s + v[1] * c, v[2]]
+}
+
+/// Convert a Right Ascension in radians to hours in the range [0, 24).
+///
+/// `atan2` returns values in [-pi, pi]; wrap so RA never comes out negative.
+fn ra_hours(ra_rad: f64) -> f64 {
+    (ra_rad.rem_euclid(2.0 * std::f64::consts::PI)).to_degrees() / 15.0
+}
+
+/// Convert an elevation/latitude angle in radians to degrees.
+fn dec_from_rad(dec_rad: f64) -> f64 {
+    dec_rad.to_degrees()
 }
 
 fn round(x: f64, decimals: u32) -> f64 {
@@ -774,6 +791,40 @@ mod tests {
 
         assert!((el - 90.0).abs() < 0.1, "el={}", el);
         assert!((rng - 2000.0).abs() < 1.0, "rng={}", rng);
+    }
+
+    #[test]
+    fn test_ra_hours_never_negative() {
+        // atan2 can return negative angles (=-12h); ra_hours must wrap to [0, 24)
+        for ra in [
+            -std::f64::consts::PI + 0.001,
+            -std::f64::consts::PI / 2.0,
+            -0.1,
+            0.0,
+            0.1,
+            std::f64::consts::PI / 2.0,
+            std::f64::consts::PI - 0.001,
+        ] {
+            let h = ra_hours(ra);
+            assert!(h >= 0.0 && h < 24.0, "ra={ra} -> {h} hours");
+        }
+    }
+
+    #[test]
+    fn test_ra_hours_wraps_at_boundary() {
+        // -8.2968h (the INMARSAT example) should wrap to ~15.7h
+        let h = ra_hours(-8.296808 * std::f64::consts::PI / 12.0);
+        assert!(h > 15.0 && h < 16.0, "h={h}");
+
+        // A small negative angle (just before 0h) must wrap to ~24h
+        let before_zero = ra_hours(-0.001);
+        assert!(before_zero > 23.99 && before_zero < 24.0, "before_zero={before_zero}");
+        let after_zero = ra_hours(0.001);
+        assert!(after_zero > 0.0 && after_zero < 0.01, "after_zero={after_zero}");
+
+        // 180 deg maps to 12h exactly
+        let half = ra_hours(std::f64::consts::PI);
+        assert!((half - 12.0).abs() < 1e-6, "half={half}");
     }
 
     #[test]
