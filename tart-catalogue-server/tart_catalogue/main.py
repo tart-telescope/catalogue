@@ -218,6 +218,7 @@ class BulkAzElRequest(BaseModel):
     lon: float
     alt: float
     dates: List[str]
+    elevation: float = 0.0
 
 
 @app.post("/bulk_az_el")
@@ -233,15 +234,15 @@ def get_bulk_az_el_fastapi(request_data: BulkAzElRequest):
         alt_param = request_data.alt
         dates_param = request_data.dates
 
-        print(f"Request data: {request_data.model_dump()}")
+        logger.debug(f"Request data: {request_data.model_dump()}")
 
         lat = angle.from_dms(lat_param)
         lon = angle.from_dms(lon_param)
         alt = alt_param
 
-        # The original code has a redundant `try...except` block for `elevation`,
-        # but since we have a Pydantic model, we can rely on the `alt` field.
-        elevation = 0.0
+        # Elevation filter (degrees): satellites below this are omitted,
+        # as for the /catalog endpoint.
+        elevation = request_data.elevation
 
         res = {"lat": lat.to_degrees(), "lon": lon.to_degrees(), "alt": alt}
 

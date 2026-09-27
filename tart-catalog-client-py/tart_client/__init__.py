@@ -153,8 +153,8 @@ class CatalogueClient:
         _save_tle_cache(dt_hour, records)
         return records
 
-    def _get_satellites(self, dt: datetime.datetime) -> List[Tuple[str, Satrec, float]]:
-        """Return pre-parsed satellite objects with flux (in-memory cached)."""
+    def _get_satellites(self, dt: datetime.datetime) -> List[Tuple[str, Satrec, float, Optional[str]]]:
+        """Return pre-parsed satellite objects with flux and code (in-memory cached)."""
         key = _cache_key(dt)
         if key in self._sat_cache:
             return self._sat_cache[key]
@@ -166,7 +166,8 @@ class CatalogueClient:
             try:
                 sat = Satrec.twoline2rv(tle["line1"], tle["line2"])
                 jy = tle.get("jy", 0.0)
-                sats.append((tle["name"], sat, jy))
+                code = tle.get("code")  # optional GNSS code (issue #4)
+                sats.append((tle["name"], sat, jy, code))
             except Exception:
                 continue
 
@@ -185,7 +186,7 @@ class CatalogueClient:
         s, c = np.sin(ang), np.cos(ang)
 
         results = []
-        for name, sat, jy in sats:
+        for name, sat, jy, code in sats:
             e, pos, vel = sat.sgp4(jd, fr)
             if e != 0:
                 continue
@@ -198,22 +199,23 @@ class CatalogueClient:
             ecef_vx = vx * c - vy * s
             ecef_vy = vx * s + vy * c
 
-            results.append(
-                {
-                    "name": name,
-                    "jy": jy,
-                    "ecef_km": [
-                        round(ecef_x, 6),
-                        round(ecef_y, 6),
-                        round(z, 6),
-                    ],
-                    "velocity_km_s": [
-                        round(ecef_vx, 6),
-                        round(ecef_vy, 6),
-                        round(vz, 6),
-                    ],
-                }
-            )
+            entry = {
+                "name": name,
+                "jy": jy,
+                "ecef_km": [
+                    round(ecef_x, 6),
+                    round(ecef_y, 6),
+                    round(z, 6),
+                ],
+                "velocity_km_s": [
+                    round(ecef_vx, 6),
+                    round(ecef_vy, 6),
+                    round(vz, 6),
+                ],
+            }
+            if code is not None:
+                entry["code"] = code
+            results.append(entry)
 
         return results
 
@@ -300,6 +302,7 @@ class CatalogueClient:
                     "azimuth_deg": round(az, 6),
                     "elevation_deg": round(el, 6),
                     "range_km": round(rng, 3),
+                    **({"code": sat["code"]} if sat.get("code") is not None else {}),
                 }
             )
 
@@ -338,6 +341,7 @@ class CatalogueClient:
                     "ra_hours": round(icrs.ra.to(u.hourangle).value, 6),
                     "dec_degrees": round(icrs.dec.to(u.deg).value, 6),
                     "distance_km": round(r, 1),
+                    **({"code": sat["code"]} if sat.get("code") is not None else {}),
                 }
             )
 

@@ -1,5 +1,41 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- Rust client: two date bugs made every position wrong (issue #9)
+  - the SGP4 propagation interval mixed `Elements::epoch()` (years since
+    J2000) with days since 1949-12-31, a ~74-year error; propagation now uses
+    `Elements::datetime_to_minutes_since_epoch()`
+  - `julian_day()` returned a Julian Day *Number* (noon-based) where a Julian
+    *Date* was expected, rotating GMST by ~180.5°; it is now midnight-based
+  - new regression tests pin the client to the astropy reference vectors in
+    `test-vectors/test_vectors.json` (0.05° tolerance); both bugs would have
+    been caught by these tests
+- Server `FileCache`: download throttling is per target file and only applies
+  to failed attempts (issue #5). The throttle used to be keyed by the
+  CelesTrak URL, which is date-independent: in a multi-date `/bulk_az_el`
+  request only the first date downloaded its own TLEs, and every other date
+  silently fell back to the wrong day's data
+- Server `FileCache`: TLE data downloaded for a past date is also filed under
+  its own TLE epoch (with a logged warning) instead of masquerading as the
+  requested day (issue #5); downloads are written atomically so a failed
+  transfer leaves no partial file
+- `/bulk_az_el`: debug `print` replaced with logging
+
+### Added
+- Optional `code` key for satellites (issue #4): `"E11"` (Galileo, official
+  GSC SV ID table), `"C14"` (BeiDou), `"PRN 13"` (GPS), QZSS PRN codes; the
+  key is omitted where no guaranteed match exists. Included in `/catalog`,
+  `/position`, `/bulk_az_el` and `/ephemerides`, and passed through by both
+  clients
+- `/bulk_az_el`: optional `elevation` filter (parity with `/catalog`)
+- Test harnesses for the bulk endpoint and the ephemeris file cache
+  (issues #1, #5): offline tests for per-date data isolation, download
+  throttling regressions, determinism across server restarts, bulk==catalog
+  parity, and a full server-chain check against the astropy reference vectors
+  (measured agreement ~0.002°)
+
 ## v0.5.2
 
 ### Fixed

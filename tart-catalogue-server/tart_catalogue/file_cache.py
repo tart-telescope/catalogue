@@ -3,6 +3,7 @@
 import datetime
 import logging
 import os
+import shutil
 import traceback
 import urllib.request
 
@@ -36,30 +37,76 @@ class FileCache(sky_object.SkyObject):
         # Override to create the object from the file
         pass
 
-    def download_file(self, url, local_file):
-        os.makedirs(os.path.dirname(local_file), exist_ok=True)
-        try:
-            if url in self.last_download_attempt:
-                print(f"Download Attempt: {self.last_download_attempt}")
-                last_try = self.last_download_attempt[url]
-                print(f"last_try: {last_try}")
-                delta_seconds = (datetime.datetime.now() - last_try).total_seconds()
-                if last_try and (delta_seconds < 3600):
-                    raise RuntimeError(
-                        f"Error ({url} -> {local_file}: Already attempted ({last_try} {delta_seconds}"
-                    )
+    def get_data_date(self, obj):
+        """The date the cached data itself is valid for (e.g. the TLE epoch),
+        or None when the data has no intrinsic date. Overridden by caches
+        whose objects can report their own epoch (issue #5)."""
+        return None
 
-            logging.info("starting download ({} -> {}".format(url, local_file))
-            self.last_download_attempt[url] = datetime.datetime.now()
+    def _refile_by_data_date(self, obj, local_path, fname):
+        """Also file the data under its own epoch date when that differs from
+        the day it was requested for.
+
+        CelesTrak serves 'current' TLEs whatever date is asked for, so a
+        download for a historical date can contain data whose epoch is days
+        away. Keeping the file under the requested date alone hides this and
+        poisons later fallbacks (issue #5).
+        """
+        data_date = self.get_data_date(obj)
+        if data_date is None:
+            return
+
+        data_fname = self.get_local_filename(data_date)
+        if data_fname == fname:
+            return
+
+        logging.warning(
+            f"{self.name}: data filed as '{fname}' has epoch "
+            f"{data_date.isoformat()}; positions for the requested date are "
+            f"propagated from this epoch"
+        )
+        if data_fname not in self.cache:
+            data_path = self.get_local_path(data_fname)
+            if not os.path.isfile(data_path):
+                os.makedirs(os.path.dirname(data_path), exist_ok=True)
+                shutil.copyfile(local_path, data_path)
+            self.cache[data_fname] = obj
+
+    def download_file(self, url, local_file):
+        directory = os.path.dirname(local_file)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+        # Throttle repeated download *failures* per target file. This used to
+        # be keyed by url and set on every attempt, but the NORAD urls are
+        # date-independent: one attempt then blocked every other date in a
+        # bulk request, which silently fell back to another day's data
+        # (issue #5).
+        last_try = self.last_download_attempt.get(local_file)
+        if last_try is not None:
+            delta_seconds = (datetime.datetime.now() - last_try).total_seconds()
+            if delta_seconds < 3600:
+                raise RuntimeError(
+                    f"Error ({url} -> {local_file}: Already attempted "
+                    f"({last_try} {delta_seconds}"
+                )
+
+        logging.info("starting download ({} -> {}".format(url, local_file))
+        tmp_file = local_file + ".part"
+        try:
             dat = urllib.request.urlopen(url)
-            with open(local_file, "wb") as w:
+            with open(tmp_file, "wb") as w:
                 w.write(dat.read())
-                w.close()
+            # Never leave a partially written file behind to be parsed later.
+            os.replace(tmp_file, local_file)
             logging.info("download complete")
         except Exception as err:
             logging.exception(err)
-            self.last_download_attempt[url] = datetime.datetime.now()
+            self.last_download_attempt[local_file] = datetime.datetime.now()
+            if os.path.isfile(tmp_file):
+                os.remove(tmp_file)
             raise (err)
+        else:
+            self.last_download_attempt.pop(local_file, None)
 
     def get_object(self, date, _depth=0):
         utc_date = utc.to_utc(date)
@@ -81,6 +128,7 @@ class FileCache(sky_object.SkyObject):
                 self.download_file(self.get_url(utc_date), local_path)
 
             self.cache[fname] = self.create_object_from_file(local_path)
+            self._refile_by_data_date(self.cache[fname], local_path, fname)
             return self.cache[fname]
         except Exception as error:
             # Something went horribly wrong. print(out the exception and use data from a day ago)
