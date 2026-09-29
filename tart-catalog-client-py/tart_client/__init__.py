@@ -311,36 +311,44 @@ class CatalogueClient:
     def celestial_positions(self, dt: Optional[datetime.datetime] = None) -> List[Dict]:
         """Return celestial (ICRS RA/Dec) positions for all satellites.
 
-        Computed from ECEF positions.
+        Computed from ECEF positions. All satellites share one epoch, so the
+        ITRS -> ICRS transform runs once over the whole position array
+        instead of once per satellite (same values, far less overhead).
         """
         ecef_list = self.ecef_positions(dt)
+        if not ecef_list:
+            return []
+
+        if dt is None:
+            dt = datetime.datetime.now(datetime.timezone.utc)
+        elif dt.tzinfo is None:
+            dt = dt.replace(tzinfo=datetime.timezone.utc)
+        t = time.Time(dt)
+
+        x = np.array([sat["ecef_km"][0] for sat in ecef_list])
+        y = np.array([sat["ecef_km"][1] for sat in ecef_list])
+        z = np.array([sat["ecef_km"][2] for sat in ecef_list])
+        r = np.sqrt(x ** 2 + y ** 2 + z ** 2)
+
+        itrs = coord.ITRS(
+            x=x * u.km,
+            y=y * u.km,
+            z=z * u.km,
+            obstime=t,
+        )
+        icrs = itrs.transform_to(coord.ICRS())
+        ra_hours = icrs.ra.to(u.hourangle).value
+        dec_degrees = icrs.dec.to(u.deg).value
 
         results = []
-        for sat in ecef_list:
-            p = sat["ecef_km"]
-            r = np.sqrt(p[0] ** 2 + p[1] ** 2 + p[2] ** 2)
-
-            if dt is None:
-                dt = datetime.datetime.now(datetime.timezone.utc)
-            elif dt.tzinfo is None:
-                dt = dt.replace(tzinfo=datetime.timezone.utc)
-            t = time.Time(dt)
-
-            itrs = coord.ITRS(
-                x=p[0] * u.km,
-                y=p[1] * u.km,
-                z=p[2] * u.km,
-                obstime=t,
-            )
-            icrs = itrs.transform_to(coord.ICRS())
-
+        for i, sat in enumerate(ecef_list):
             results.append(
                 {
                     "name": sat["name"],
                     "jy": sat.get("jy", 0.0),
-                    "ra_hours": round(icrs.ra.to(u.hourangle).value, 6),
-                    "dec_degrees": round(icrs.dec.to(u.deg).value, 6),
-                    "distance_km": round(r, 1),
+                    "ra_hours": round(ra_hours[i], 6),
+                    "dec_degrees": round(dec_degrees[i], 6),
+                    "distance_km": round(r[i], 1),
                     **({"code": sat["code"]} if sat.get("code") is not None else {}),
                 }
             )

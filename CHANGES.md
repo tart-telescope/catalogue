@@ -36,6 +36,14 @@
   parity, and a full server-chain check against the astropy reference vectors
   (measured agreement ~0.002°)
 
+### Changed
+- Python client `celestial_positions`: the ITRS -> ICRS transform now runs once
+  over all satellites at their shared epoch instead of once per satellite; the
+  outputs are unchanged (0 mismatches over 140 live TLEs and the pinned
+  astropy-vector tests) and a call for 140 satellites drops from ~3 s to ~45 ms.
+  This removes ~18 s from a tart2ms `--add-model` conversion
+  (tart-telescope/tart2ms#53).
+
 ## v0.5.2
 
 ### Fixed
