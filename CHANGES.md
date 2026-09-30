@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.6.0
 
 ### Added
 - `tart-catalogue-core` crate: the TLE propagation and coordinate transforms
