@@ -20,7 +20,9 @@
   than by satellite, following the core's bulk loop shape; each row still
   carries both `name` and `date`
 - crates.io publish workflow tests the whole workspace and publishes the core
-  before the client, which now depends on it
+  before the client, which now depends on it; a crate whose version is already
+  on crates.io is skipped rather than failing the release, so a tag that bumps
+  only one of the two still publishes the other
 
 ## v0.5.2
 
