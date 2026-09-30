@@ -13,6 +13,13 @@ uv run pytest tart_catalogue/ -v
 
 Uses FastAPI's `TestClient` — no running server or network needed.
 
+`test_file_cache.py`, `test_bulk_az_el.py` and `test_satellite_code.py` are
+fully offline regression harnesses: they pin the `/bulk_az_el` per-date
+behaviour and the date/epoch handling of the ephemeris file cache, and check
+the complete server chain against the astropy reference vectors in
+`test-vectors/test_vectors.json`. (`test_main.py::TestCatalog` fetches live
+TLE data from CelesTrak.)
+
 ### Integration testbench
 
 Runs the Rust client against a running server:
@@ -142,7 +149,7 @@ cargo run --release 2>/dev/null | jq '.[0]'
 ```sh
 cargo check     # fast compile-check
 cargo clippy    # lint
-cargo test      # 10 unit tests (GMST, rotations, SGP4, ECEF, horizontal)
+cargo test      # unit tests (GMST, JD, SGP4, ECEF, horizontal + astropy reference vectors)
 ```
 
 ---
@@ -177,4 +184,5 @@ TART_CATALOGUE_URL=http://localhost:8876 uv run python -m tart_client.cli celest
 uv run pytest tart_client/ -v
 ```
 
-7 tests covering coordinate transforms validated against astropy reference vectors.
+Coordinate transforms validated against the astropy reference vectors, plus
+flux (`jy`) and optional `code` pass-through tests.

@@ -2,12 +2,15 @@
 #
 # (c) 2013-2023 Tim Molteno (tim@elec.ac.nz)
 #
+import datetime
+
 import numpy as np
 from sgp4.earth_gravity import wgs84
 from sgp4.io import twoline2rv
 from tart.imaging import location
 
 import tart_catalogue.file_cache as file_cache
+from tart_catalogue.satellite_code import satellite_code
 
 
 class Sp4Ephemeris:
@@ -30,6 +33,19 @@ class Sp4Ephemeris:
         except (ValueError, IndexError):
             return None
 
+    @property
+    def code(self):
+        """Optional GNSS code (e.g. 'E11', 'C14', 'PRN 13'). See issue #4."""
+        return satellite_code(self.name)
+
+    def epoch_date(self):
+        """TLE epoch as a naive UTC datetime."""
+        ep = self.sv.epoch
+        if isinstance(ep, datetime.datetime):
+            return ep
+        # sgp4 < 2: epoch is days since 1949-12-31 00:00 UT
+        return datetime.datetime(1949, 12, 31) + datetime.timedelta(days=float(ep))
+
     def to_dict(self, jy=None):
         """Serialize the raw TLE data for client-side position calculation."""
         d = {
@@ -37,6 +53,9 @@ class Sp4Ephemeris:
             "line1": self.line1,
             "line2": self.line2,
         }
+        code = self.code
+        if code is not None:
+            d["code"] = code
         if jy is not None:
             d["jy"] = jy
         return d
@@ -90,8 +109,23 @@ class Sp4Ephemerides:
         ret = []
         for sv in self.satellites:
             p, v = sv.get_position(date)
-            ret.append({"name": sv.name, "ecef": p, "ecef_dot": v, "jy": self.jansky})
+            entry = {"name": sv.name, "ecef": p, "ecef_dot": v, "jy": self.jansky}
+            code = sv.code
+            if code is not None:
+                entry["code"] = code
+            ret.append(entry)
         return ret
+
+    def epoch_date(self):
+        """Median TLE epoch of the satellites in this file.
+
+        CelesTrak serves 'current' TLEs regardless of the requested date, so
+        the epoch may not match the date the data is used for (issue #5).
+        """
+        epochs = sorted(sv.epoch_date() for sv in self.satellites)
+        if not epochs:
+            return None
+        return epochs[len(epochs) // 2]
 
     def get_ephemeris_data(self, flux_data=None):
         """Return raw TLE data for all satellites so clients can
@@ -115,9 +149,11 @@ class Sp4Ephemerides:
             el, az = np.round([_el.to_degrees(), _az.to_degrees()], decimals=6)
             r = np.round(_r, decimals=1)
             if el >= elevation:
-                ret.append(
-                    {"name": sv.name, "r": r, "el": el, "az": az, "jy": self.jansky}
-                )
+                entry = {"name": sv.name, "r": r, "el": el, "az": az, "jy": self.jansky}
+                code = sv.code
+                if code is not None:
+                    entry["code"] = code
+                ret.append(entry)
         return ret
 
 
@@ -136,6 +172,9 @@ class EphemerisFileCache(file_cache.FileCache):
 
     def __init__(self, name):
         file_cache.FileCache.__init__(self, name)
+
+    def get_data_date(self, obj):
+        return obj.epoch_date()
 
     def get_positions(self, date):
         eph = self.get_object(date)

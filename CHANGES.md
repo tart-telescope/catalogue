@@ -8,14 +8,49 @@
   point) extracted from the Rust client into a pure, I/O-free library that also
   builds for `wasm32-unknown-unknown` — the shape proposed in issue #10, so the
   TART web app's wasm wrapper can depend on it instead of reimplementing the
-  maths. Gated by parity tests against `test-vectors/test_vectors.json`, which
-  the Rust side previously did not consume
+  maths. Gated by parity tests against `test-vectors/test_vectors.json`, vendored
+  into the crate with a drift check against the canonical copy
 - Root Cargo workspace covering the core and the Rust client
+- Optional `code` key for satellites (issue #4): `"E11"` (Galileo, official
+  GSC SV ID table), `"C14"` (BeiDou), `"PRN 13"` (GPS), QZSS PRN codes; the
+  key is omitted where no guaranteed match exists. Included in `/catalog`,
+  `/position`, `/bulk_az_el` and `/ephemerides`, and passed through by both
+  clients
+- `/bulk_az_el`: optional `elevation` filter (parity with `/catalog`)
+- Test harnesses for the bulk endpoint and the ephemeris file cache
+  (issues #1, #5): offline tests for per-date data isolation, download
+  throttling regressions, determinism across server restarts, bulk==catalog
+  parity, and a full server-chain check against the astropy reference vectors
+  (measured agreement ~0.002°)
+
+### Fixed
+- Rust client: two date bugs made every position wrong (issue #9)
+  - the SGP4 propagation interval mixed `Elements::epoch()` (years since
+    J2000) with days since 1949-12-31, a ~74-year error; propagation now uses
+    `Elements::datetime_to_minutes_since_epoch()`
+  - `julian_day()` returned a Julian Day *Number* (noon-based) where a Julian
+    *Date* was expected, rotating GMST by ~180.5°; it is now midnight-based
+  - regression tests pin the client to the astropy reference vectors in
+    `test-vectors/test_vectors.json` (0.05° tolerance); both bugs would have
+    been caught by these tests
+- Server `FileCache`: download throttling is per target file and only applies
+  to failed attempts (issue #5). The throttle used to be keyed by the
+  CelesTrak URL, which is date-independent: in a multi-date `/bulk_az_el`
+  request only the first date downloaded its own TLEs, and every other date
+  silently fell back to the wrong day's data
+- Server `FileCache`: TLE data downloaded for a past date is also filed under
+  its own TLE epoch (with a logged warning) instead of masquerading as the
+  requested day (issue #5); downloads are written atomically so a failed
+  transfer leaves no partial file
+- `/bulk_az_el`: debug `print` replaced with logging
 
 ### Changed
 - `tart-catalogue-client` is now a thin CLI over `tart-catalogue-core`; its
-  local copies of the propagation/coordinate maths are gone (main.rs 843 -> 562
-  lines), along with the direct `sgp4` dependency
+  local copies of the propagation/coordinate maths are gone (including the
+  date-bug-prone `julian_day` arithmetic, superseded by the core's
+  astropy-validated time handling), along with the direct `sgp4` dependency.
+  The client's wire record keeps the optional satellite `code` and passes it
+  through to every output; the core's minimal record does not carry it
 - CLI JSON output (`ecef`, `azel`, `celestial`) is now grouped by date rather
   than by satellite, following the core's bulk loop shape; each row still
   carries both `name` and `date`
@@ -23,6 +58,12 @@
   before the client, which now depends on it; a crate whose version is already
   on crates.io is skipped rather than failing the release, so a tag that bumps
   only one of the two still publishes the other
+- Python client `celestial_positions`: the ITRS -> ICRS transform now runs once
+  over all satellites at their shared epoch instead of once per satellite; the
+  outputs are unchanged (0 mismatches over 140 live TLEs and the pinned
+  astropy-vector tests) and a call for 140 satellites drops from ~3 s to ~45 ms.
+  This removes ~18 s from a tart2ms `--add-model` conversion
+  (tart-telescope/tart2ms#53).
 
 ## v0.5.2
 

@@ -48,7 +48,7 @@ The catalogue is served on port 8876 through an nginx reverse proxy.
 GET /catalog?lat=-45.87&lon=170.60&alt=100&ele=10&date=2026-06-16T12:00:00Z
 ```
 
-Returns a list of objects with `name`, `el` (elevation°), `az` (azimuth°), `r` (range m), `jy` (flux density).
+Returns a list of objects with `name`, `el` (elevation°), `az` (azimuth°), `r` (range m), `jy` (flux density). An optional `code` key carries the GNSS code where known (e.g. `"E11"` Galileo, `"C14"` BeiDou, `"PRN 13"` GPS); it is omitted when no guaranteed match exists.
 
 ### `/position`
 
@@ -64,7 +64,19 @@ Returns `name`, `ecef` [x,y,z] in meters, `ecef_dot` [vx,vy,vz] in m/s, `jy`.
 GET /ephemerides?date=2026-06-16T12:00:00Z
 ```
 
-Returns `name`, `line1`, `line2` — feed into any SGP4 library to compute positions client-side.
+Returns `name`, `line1`, `line2` — feed into any SGP4 library to compute positions client-side. Includes `jy` and the optional `code` (see `/catalog`).
+
+### `/bulk_az_el`
+
+```
+POST /bulk_az_el
+{"lat": -45.87, "lon": 170.60, "alt": 100, "dates": ["2026-06-16T12:00:00Z", ...], "elevation": 0.0}
+```
+
+Returns `{"lat", "lon", "alt", "dates", "az_el"}` where `az_el[i]` is the
+`/catalog` answer for `dates[i]` (same entries: `name`, `el`, `az`, `r`, `jy`,
+optional `code`). `elevation` is an optional minimum-elevation filter in
+degrees (default 0.0). All dates must be no more than 24 h in the future.
 
 ## Clients
 

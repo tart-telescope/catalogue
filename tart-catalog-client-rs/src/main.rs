@@ -5,8 +5,38 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::Instant;
 
-use tart_catalogue_core::propagation::{self, Propagator, TleRecord};
+use tart_catalogue_core::propagation::{self, Propagator};
 use tart_catalogue_core::{geo, time};
+
+/// A TLE record as returned by the /ephemerides endpoint.
+///
+/// The client's wire record carries the optional satellite `code` the server
+/// attaches (issue #4); the core's minimal record does not, so propagation
+/// converts with [`TleRecord::as_core`] and the code travels alongside by
+/// name.
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+struct TleRecord {
+    name: String,
+    line1: String,
+    line2: String,
+    #[serde(default)]
+    jy: f64,
+    /// Optional GNSS code (e.g. "E11", "C14", "PRN 13"), passed through
+    /// from the server (issue #4).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    code: Option<String>,
+}
+
+impl TleRecord {
+    fn as_core(&self) -> propagation::TleRecord {
+        propagation::TleRecord {
+            name: self.name.clone(),
+            line1: self.line1.clone(),
+            line2: self.line2.clone(),
+            jy: self.jy,
+        }
+    }
+}
 
 /// Raw ECEF position with datetime for further transforms.
 #[derive(Debug)]
@@ -16,6 +46,7 @@ struct EcefState {
     position: [f64; 3],
     velocity: [f64; 3],
     jy: f64,
+    code: Option<String>,
 }
 
 /// ECEF position and velocity (serializable).
@@ -26,6 +57,8 @@ struct EcefPosition {
     ecef_km: [f64; 3],
     velocity_km_s: [f64; 3],
     jy: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    code: Option<String>,
 }
 
 /// Horizontal (Az/El) position.
@@ -37,6 +70,8 @@ struct HorizontalPosition {
     elevation_deg: f64,
     range_km: f64,
     jy: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    code: Option<String>,
 }
 
 /// Celestial (RA/Dec) position.
@@ -48,6 +83,8 @@ struct CelestialPosition {
     dec_degrees: f64,
     distance_km: f64,
     jy: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    code: Option<String>,
 }
 
 /// Local cache of ephemerides in ~/.cache/tart-catalogue/
@@ -231,7 +268,8 @@ impl CatalogueClient {
             return cached.clone();
         }
 
-        let (propagators, _skipped) = propagation::build_propagators(tles);
+        let core_records: Vec<_> = tles.iter().map(TleRecord::as_core).collect();
+        let (propagators, _skipped) = propagation::build_propagators(&core_records);
 
         self.propagator_cache
             .insert(cache_key.to_string(), propagators.clone());
@@ -245,6 +283,7 @@ impl CatalogueClient {
     fn propagate_to_ecef_states(
         propagators: &[Propagator],
         dates: &[DateTime<Utc>],
+        code_by_name: &HashMap<String, Option<String>>,
     ) -> Vec<EcefState> {
         let mut states = Vec::new();
 
@@ -257,6 +296,7 @@ impl CatalogueClient {
                     continue;
                 };
                 states.push(EcefState {
+                    code: code_by_name.get(&propagator.name).cloned().flatten(),
                     name: propagator.name.clone(),
                     date: *date,
                     position: geo::rotate_z_sc(teme.position, rotation),
@@ -278,7 +318,12 @@ impl CatalogueClient {
         let tles = self.fetch_tles(query_date).await?;
         let cache_key = cache::cache_key(query_date);
         let propagators = self.get_propagators(&cache_key, &tles);
-        Ok(Self::propagate_to_ecef_states(&propagators, dates))
+        let code_by_name = code_map(&tles);
+        Ok(Self::propagate_to_ecef_states(
+            &propagators,
+            dates,
+            &code_by_name,
+        ))
     }
 
     /// Return ECEF positions (km) and velocities (km/s) for all satellites.
@@ -305,6 +350,7 @@ impl CatalogueClient {
                         round(s.velocity[2], 6),
                     ],
                     jy: s.jy,
+                    code: s.code,
                 }
             })
             .collect())
@@ -338,6 +384,7 @@ impl CatalogueClient {
         let tles = self.fetch_tles(query_date).await?;
         let cache_key = cache::cache_key(query_date);
         let propagators = self.get_propagators(&cache_key, &tles);
+        let code_by_name = code_map(&tles);
 
         // One bulk call: the core computes the rotation and the observer once
         // per instant and shares them across every satellite.
@@ -360,6 +407,7 @@ impl CatalogueClient {
                     continue;
                 }
                 out.push(HorizontalPosition {
+                    code: code_by_name.get(&s.name).cloned().flatten(),
                     name: s.name,
                     date: date.to_rfc3339(),
                     azimuth_deg: round(s.az_deg, 6),
@@ -403,10 +451,18 @@ impl CatalogueClient {
                 dec_degrees: round(dec_from_rad(inertial[2] / r), 6),
                 distance_km: round(r, 1),
                 jy: s.jy,
+                code: s.code,
             });
         }
         Ok(results)
     }
+}
+
+/// Name -> satellite code lookup for threading `code` onto outputs.
+fn code_map(tles: &[TleRecord]) -> HashMap<String, Option<String>> {
+    tles.iter()
+        .map(|t| (t.name.clone(), t.code.clone()))
+        .collect()
 }
 
 /// Convert a Right Ascension in radians to hours in the range [0, 24).
@@ -507,10 +563,6 @@ mod tests {
     const GPS_TLE_L1: &str = "1 24876U 97035A   24164.50000000  .00000080  00000+0  00000+0 0  9999";
     const GPS_TLE_L2: &str = "2 24876  55.4401 180.3028 0103987  60.0787 301.0966  2.00562231196828";
 
-    /// The reference instant from test-vectors/test_vectors.json, where
-    /// astropy puts PRN 13 at az 283.494 deg, el -1.273 deg, range 25778.21 km
-    /// for the Dunedin observer. The maths tests live in tart-catalogue-core;
-    /// what this one guards is the client's DateTime -> unix-seconds handoff.
     fn test_date() -> DateTime<Utc> {
         Utc.with_ymd_and_hms(2024, 6, 12, 12, 0, 0).unwrap()
     }
@@ -521,21 +573,25 @@ mod tests {
             line1: GPS_TLE_L1.to_string(),
             line2: GPS_TLE_L2.to_string(),
             jy: 0.0,
+            code: None,
         }
     }
 
     fn test_propagators() -> Vec<Propagator> {
-        let (propagators, skipped) = propagation::build_propagators(&[test_tle()]);
+        let (propagators, skipped) = propagation::build_propagators(&[test_tle().as_core()]);
         assert_eq!(skipped, 0, "the reference TLE should parse");
         propagators
     }
 
+    /// The client's DateTime -> unix-seconds handoff into the core must land
+    /// on the astropy reference for the same instant.
     #[test]
     fn horizontal_matches_the_reference_vector() {
         let propagators = test_propagators();
         let dates = vec![test_date()];
+        let codes = HashMap::new();
 
-        let states = CatalogueClient::propagate_to_ecef_states(&propagators, &dates);
+        let states = CatalogueClient::propagate_to_ecef_states(&propagators, &dates, &codes);
         assert_eq!(states.len(), 1);
 
         let observer = geo::geodetic_to_ecef(-45.87, 170.60, 100.0);
@@ -559,5 +615,200 @@ mod tests {
         let dates = dates_from_now();
         assert_eq!(dates.len(), 5);
         assert!(dates.windows(2).all(|w| w[1] > w[0]));
+    }
+
+    #[test]
+    fn test_tle_record_flux_default() {
+        let json = r#"{"name":"TEST","line1":"","line2":""}"#;
+        let rec: TleRecord = serde_json::from_str(json).unwrap();
+        assert!((rec.jy - 0.0).abs() < 1.0, "jy={}", rec.jy);
+    }
+
+    #[test]
+    fn test_tle_record_code() {
+        let json = r#"{"name":"GSAT0213","line1":"","line2":"","code":"E04"}"#;
+        let rec: TleRecord = serde_json::from_str(json).unwrap();
+        assert_eq!(rec.code.as_deref(), Some("E04"));
+    }
+
+    #[test]
+    fn test_tle_record_code_default() {
+        let json = r#"{"name":"TEST","line1":"","line2":""}"#;
+        let rec: TleRecord = serde_json::from_str(json).unwrap();
+        assert!(rec.code.is_none());
+    }
+
+    // ------------------------------------------------------------------
+    // Reference-vector regression tests (issue #9), carried over from the
+    // pre-split client (25172fb).
+    //
+    // test-vectors/test_vectors.json holds astropy-computed TEME, ECEF and
+    // horizontal values for a fixed TLE and observer. These assertions pin
+    // the client against an independent implementation and would have
+    // caught both date bugs on their own. The core runs its own copies in
+    // tart-catalogue-core/tests; these exercise the client's paths.
+    // ------------------------------------------------------------------
+
+    #[derive(serde::Deserialize)]
+    struct VectorTle {
+        #[allow(dead_code)]
+        name: String,
+        line1: String,
+        line2: String,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct VectorObserver {
+        lat_deg: f64,
+        lon_deg: f64,
+        alt_m: f64,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct VectorDate {
+        date: String,
+        teme_km: [f64; 3],
+        ecef_km: [f64; 3],
+    }
+
+    #[derive(serde::Deserialize)]
+    struct VectorHorizontal {
+        azimuth_deg: f64,
+        elevation_deg: f64,
+        range_km: f64,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct TestVectors {
+        tle: VectorTle,
+        observer: VectorObserver,
+        dates: Vec<VectorDate>,
+        horizontal: Vec<VectorHorizontal>,
+    }
+
+    fn load_test_vectors() -> TestVectors {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../test-vectors/test_vectors.json");
+        let raw = std::fs::read_to_string(path).expect("read test-vectors/test_vectors.json");
+        serde_json::from_str(&raw).expect("parse test vectors")
+    }
+
+    fn vector_dates(v: &TestVectors) -> Vec<DateTime<Utc>> {
+        v.dates
+            .iter()
+            .map(|d| {
+                DateTime::parse_from_rfc3339(&d.date)
+                    .expect("vector date parses")
+                    .with_timezone(&Utc)
+            })
+            .collect()
+    }
+
+    /// Propagators for the TLE the vectors were generated against.
+    fn vector_propagators(v: &TestVectors) -> Vec<Propagator> {
+        let record = TleRecord {
+            name: v.tle.name.clone(),
+            line1: v.tle.line1.clone(),
+            line2: v.tle.line2.clone(),
+            jy: 0.0,
+            code: None,
+        };
+        let (propagators, skipped) = propagation::build_propagators(&[record.as_core()]);
+        assert_eq!(skipped, 0, "the reference TLE should parse");
+        propagators
+    }
+
+    /// Propagate the test-vector TLE through the production code path
+    /// (core propagation + the client's ECEF assembly) at the vector dates.
+    fn vector_ecef_states(v: &TestVectors) -> Vec<EcefState> {
+        let codes = HashMap::new();
+        CatalogueClient::propagate_to_ecef_states(&vector_propagators(v), &vector_dates(v), &codes)
+    }
+
+    #[test]
+    fn test_teme_matches_astropy_vectors() {
+        let v = load_test_vectors();
+        let propagator = &vector_propagators(&v)[0];
+
+        for d in &v.dates {
+            let naive = DateTime::parse_from_rfc3339(&d.date)
+                .expect("vector date parses")
+                .naive_utc();
+            let teme = propagation::propagate_teme(propagator, &naive).expect("propagation");
+            for i in 0..3 {
+                assert!(
+                    (teme.position[i] - d.teme_km[i]).abs() < 0.5,
+                    "teme[{}] at {}: got {}, want {}",
+                    i,
+                    d.date,
+                    teme.position[i],
+                    d.teme_km[i]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_ecef_matches_astropy_vectors() {
+        let v = load_test_vectors();
+        let states = vector_ecef_states(&v);
+        assert_eq!(states.len(), v.dates.len());
+        for (s, d) in states.iter().zip(v.dates.iter()) {
+            for i in 0..3 {
+                assert!(
+                    (s.position[i] - d.ecef_km[i]).abs() < 1.0,
+                    "ecef[{}] at {}: got {}, want {}",
+                    i,
+                    d.date,
+                    s.position[i],
+                    d.ecef_km[i]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_horizontal_matches_astropy_vectors() {
+        let v = load_test_vectors();
+        let states = vector_ecef_states(&v);
+        let obs = geo::geodetic_to_ecef(v.observer.lat_deg, v.observer.lon_deg, v.observer.alt_m);
+        assert_eq!(states.len(), v.horizontal.len());
+
+        for (s, h) in states.iter().zip(v.horizontal.iter()) {
+            let got = geo::horizontal_from_ecef(
+                s.position,
+                obs,
+                v.observer.lat_deg,
+                v.observer.lon_deg,
+            );
+            let mut d_az = (got.az_deg - h.azimuth_deg) % 360.0;
+            if d_az > 180.0 {
+                d_az -= 360.0;
+            }
+            if d_az < -180.0 {
+                d_az += 360.0;
+            }
+            assert!(
+                d_az.abs() < 0.05,
+                "az at {}: got {}, want {}",
+                s.date.to_rfc3339(),
+                got.az_deg,
+                h.azimuth_deg
+            );
+            assert!(
+                (got.el_deg - h.elevation_deg).abs() < 0.05,
+                "el at {}: got {}, want {}",
+                s.date.to_rfc3339(),
+                got.el_deg,
+                h.elevation_deg
+            );
+            assert!(
+                (got.range_km - h.range_km).abs() < 1.0,
+                "range at {}: got {}, want {}",
+                s.date.to_rfc3339(),
+                got.range_km,
+                h.range_km
+            );
+        }
     }
 }

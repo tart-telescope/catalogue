@@ -153,8 +153,8 @@ class CatalogueClient:
         _save_tle_cache(dt_hour, records)
         return records
 
-    def _get_satellites(self, dt: datetime.datetime) -> List[Tuple[str, Satrec, float]]:
-        """Return pre-parsed satellite objects with flux (in-memory cached)."""
+    def _get_satellites(self, dt: datetime.datetime) -> List[Tuple[str, Satrec, float, Optional[str]]]:
+        """Return pre-parsed satellite objects with flux and code (in-memory cached)."""
         key = _cache_key(dt)
         if key in self._sat_cache:
             return self._sat_cache[key]
@@ -166,7 +166,8 @@ class CatalogueClient:
             try:
                 sat = Satrec.twoline2rv(tle["line1"], tle["line2"])
                 jy = tle.get("jy", 0.0)
-                sats.append((tle["name"], sat, jy))
+                code = tle.get("code")  # optional GNSS code (issue #4)
+                sats.append((tle["name"], sat, jy, code))
             except Exception:
                 continue
 
@@ -185,7 +186,7 @@ class CatalogueClient:
         s, c = np.sin(ang), np.cos(ang)
 
         results = []
-        for name, sat, jy in sats:
+        for name, sat, jy, code in sats:
             e, pos, vel = sat.sgp4(jd, fr)
             if e != 0:
                 continue
@@ -198,22 +199,23 @@ class CatalogueClient:
             ecef_vx = vx * c - vy * s
             ecef_vy = vx * s + vy * c
 
-            results.append(
-                {
-                    "name": name,
-                    "jy": jy,
-                    "ecef_km": [
-                        round(ecef_x, 6),
-                        round(ecef_y, 6),
-                        round(z, 6),
-                    ],
-                    "velocity_km_s": [
-                        round(ecef_vx, 6),
-                        round(ecef_vy, 6),
-                        round(vz, 6),
-                    ],
-                }
-            )
+            entry = {
+                "name": name,
+                "jy": jy,
+                "ecef_km": [
+                    round(ecef_x, 6),
+                    round(ecef_y, 6),
+                    round(z, 6),
+                ],
+                "velocity_km_s": [
+                    round(ecef_vx, 6),
+                    round(ecef_vy, 6),
+                    round(vz, 6),
+                ],
+            }
+            if code is not None:
+                entry["code"] = code
+            results.append(entry)
 
         return results
 
@@ -300,6 +302,7 @@ class CatalogueClient:
                     "azimuth_deg": round(az, 6),
                     "elevation_deg": round(el, 6),
                     "range_km": round(rng, 3),
+                    **({"code": sat["code"]} if sat.get("code") is not None else {}),
                 }
             )
 
@@ -308,36 +311,45 @@ class CatalogueClient:
     def celestial_positions(self, dt: Optional[datetime.datetime] = None) -> List[Dict]:
         """Return celestial (ICRS RA/Dec) positions for all satellites.
 
-        Computed from ECEF positions.
+        Computed from ECEF positions. All satellites share one epoch, so the
+        ITRS -> ICRS transform runs once over the whole position array
+        instead of once per satellite (same values, far less overhead).
         """
         ecef_list = self.ecef_positions(dt)
+        if not ecef_list:
+            return []
+
+        if dt is None:
+            dt = datetime.datetime.now(datetime.timezone.utc)
+        elif dt.tzinfo is None:
+            dt = dt.replace(tzinfo=datetime.timezone.utc)
+        t = time.Time(dt)
+
+        x = np.array([sat["ecef_km"][0] for sat in ecef_list])
+        y = np.array([sat["ecef_km"][1] for sat in ecef_list])
+        z = np.array([sat["ecef_km"][2] for sat in ecef_list])
+        r = np.sqrt(x ** 2 + y ** 2 + z ** 2)
+
+        itrs = coord.ITRS(
+            x=x * u.km,
+            y=y * u.km,
+            z=z * u.km,
+            obstime=t,
+        )
+        icrs = itrs.transform_to(coord.ICRS())
+        ra_hours = icrs.ra.to(u.hourangle).value
+        dec_degrees = icrs.dec.to(u.deg).value
 
         results = []
-        for sat in ecef_list:
-            p = sat["ecef_km"]
-            r = np.sqrt(p[0] ** 2 + p[1] ** 2 + p[2] ** 2)
-
-            if dt is None:
-                dt = datetime.datetime.now(datetime.timezone.utc)
-            elif dt.tzinfo is None:
-                dt = dt.replace(tzinfo=datetime.timezone.utc)
-            t = time.Time(dt)
-
-            itrs = coord.ITRS(
-                x=p[0] * u.km,
-                y=p[1] * u.km,
-                z=p[2] * u.km,
-                obstime=t,
-            )
-            icrs = itrs.transform_to(coord.ICRS())
-
+        for i, sat in enumerate(ecef_list):
             results.append(
                 {
                     "name": sat["name"],
                     "jy": sat.get("jy", 0.0),
-                    "ra_hours": round(icrs.ra.to(u.hourangle).value, 6),
-                    "dec_degrees": round(icrs.dec.to(u.deg).value, 6),
-                    "distance_km": round(r, 1),
+                    "ra_hours": round(ra_hours[i], 6),
+                    "dec_degrees": round(dec_degrees[i], 6),
+                    "distance_km": round(r[i], 1),
+                    **({"code": sat["code"]} if sat.get("code") is not None else {}),
                 }
             )
 

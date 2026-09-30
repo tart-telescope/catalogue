@@ -211,6 +211,43 @@ def test_flux_defaults_to_zero():
         client.fetch_tles = original_fetch
 
 
+# TLE with the optional GNSS code (issue #4)
+CODE_TLE = {"name": "GSAT0213", "line1": GPS_TLE["line1"], "line2": GPS_TLE["line2"], "code": "E04"}
+
+
+def test_outputs_include_code():
+    """Outputs should carry the optional code through from the server."""
+    client = CatalogueClient()
+    original_fetch = client.fetch_tles
+    client.fetch_tles = lambda dt=None: [CODE_TLE]
+    observer = VECTORS["observer"]
+    try:
+        dt = _parse_date(VECTORS["dates"][0]["date"])
+        ecef = client.ecef_positions(dt=dt)
+        assert ecef[0]["code"] == "E04", f"Expected 'E04', got {ecef[0].get('code')}"
+        celestial = client.celestial_positions(dt=dt)
+        assert celestial[0]["code"] == "E04"
+        horizontal = client.horizontal_positions(
+            lat=observer["lat_deg"], lon=observer["lon_deg"], alt=observer["alt_m"],
+            dt=dt,
+        )
+        assert horizontal[0]["code"] == "E04"
+    finally:
+        client.fetch_tles = original_fetch
+
+
+def test_code_is_omitted_when_absent():
+    """Older servers (or satellites without a known code) omit the key."""
+    client = CatalogueClient()
+    original_fetch = client.fetch_tles
+    client.fetch_tles = lambda dt=None: [GPS_TLE]  # no code key
+    try:
+        result = client.ecef_positions(dt=_parse_date(VECTORS["dates"][0]["date"]))
+        assert "code" not in result[0], f"Unexpected code: {result[0].get('code')}"
+    finally:
+        client.fetch_tles = original_fetch
+
+
 def test_horizontal_min_elevation_filters():
     """min_elevation should remove satellites below the threshold."""
     client = CatalogueClient()
