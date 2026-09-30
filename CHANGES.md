@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- `tart-catalogue-core` crate: the TLE propagation and coordinate transforms
+  (time/geo/propagation, plus the bulk many-instants-by-many-satellites entry
+  point) extracted from the Rust client into a pure, I/O-free library that also
+  builds for `wasm32-unknown-unknown` — the shape proposed in issue #10, so the
+  TART web app's wasm wrapper can depend on it instead of reimplementing the
+  maths. Gated by parity tests against `test-vectors/test_vectors.json`, which
+  the Rust side previously did not consume
+- Root Cargo workspace covering the core and the Rust client
+
+### Changed
+- `tart-catalogue-client` is now a thin CLI over `tart-catalogue-core`; its
+  local copies of the propagation/coordinate maths are gone (main.rs 843 -> 562
+  lines), along with the direct `sgp4` dependency
+- CLI JSON output (`ecef`, `azel`, `celestial`) is now grouped by date rather
+  than by satellite, following the core's bulk loop shape; each row still
+  carries both `name` and `date`
+- crates.io publish workflow tests the whole workspace and publishes the core
+  before the client, which now depends on it
+
 ## v0.5.2
 
 ### Fixed

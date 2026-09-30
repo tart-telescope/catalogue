@@ -11,9 +11,6 @@ jobs:
     permissions:
       id-token: write
       contents: read
-    defaults:
-      run:
-        working-directory: tart-catalog-client-rs
     steps:
       - uses: actions/checkout@v6
 
@@ -21,7 +18,16 @@ jobs:
 
       - uses: rust-lang/crates-io-auth-action@v1.0.4
         id: auth
-      - run: cargo test
-      - run: cargo publish
+
+      # Whole workspace: the core's astropy parity vectors are the
+      # correctness gate for both crates.
+      - run: cargo test --workspace
+
+      # The client depends on the core, so the core has to be on crates.io
+      # before the client's version requirement can resolve.
+      - run: cargo publish -p tart-catalogue-core
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+      - run: cargo publish -p tart-catalogue-client
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
