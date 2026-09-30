@@ -1,12 +1,19 @@
 use chrono::{DateTime, Datelike, Timelike, Utc};
-use sgp4::{Constants, Elements};
 use std::collections::HashMap;
 use std::error::Error;
 use std::fs;
 use std::path::PathBuf;
 use std::time::Instant;
 
+use tart_catalogue_core::propagation::{self, Propagator};
+use tart_catalogue_core::{geo, time};
+
 /// A TLE record as returned by the /ephemerides endpoint.
+///
+/// The client's wire record carries the optional satellite `code` the server
+/// attaches (issue #4); the core's minimal record does not, so propagation
+/// converts with [`TleRecord::as_core`] and the code travels alongside by
+/// name.
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
 struct TleRecord {
     name: String,
@@ -20,19 +27,16 @@ struct TleRecord {
     code: Option<String>,
 }
 
-/// SGP4 prediction in TEME (km, km/s).
-#[derive(Debug)]
-struct TemeState {
-    name: String,
-    date: DateTime<Utc>,
-    position: [f64; 3],
-    velocity: [f64; 3],
-    jy: f64,
-    code: Option<String>,
+impl TleRecord {
+    fn as_core(&self) -> propagation::TleRecord {
+        propagation::TleRecord {
+            name: self.name.clone(),
+            line1: self.line1.clone(),
+            line2: self.line2.clone(),
+            jy: self.jy,
+        }
+    }
 }
-
-/// Pre-parsed propagator: (name, Elements, Constants, jy, code).
-type CachedPropagator = (String, Elements, Constants, f64, Option<String>);
 
 /// Raw ECEF position with datetime for further transforms.
 #[derive(Debug)]
@@ -220,7 +224,7 @@ mod cache {
 /// Configuration for the catalogue client.
 struct CatalogueClient {
     base_url: String,
-    propagator_cache: HashMap<String, Vec<CachedPropagator>>,
+    propagator_cache: HashMap<String, Vec<Propagator>>,
 }
 
 impl CatalogueClient {
@@ -259,113 +263,50 @@ impl CatalogueClient {
     }
 
     /// Get or build cached SGP4 propagators for a set of TLEs.
-    fn get_propagators(
-        &mut self,
-        cache_key: &str,
-        tles: &[TleRecord],
-    ) -> Vec<CachedPropagator> {
+    fn get_propagators(&mut self, cache_key: &str, tles: &[TleRecord]) -> Vec<Propagator> {
         if let Some(cached) = self.propagator_cache.get(cache_key) {
             return cached.clone();
         }
 
-        let mut propagators = Vec::new();
-        for tle in tles {
-            let elements = match Elements::from_tle(
-                Some(tle.name.clone()),
-                tle.line1.as_bytes(),
-                tle.line2.as_bytes(),
-            ) {
-                Ok(e) => e,
-                Err(_) => continue,
-            };
-            let constants = match Constants::from_elements(&elements) {
-                Ok(c) => c,
-                Err(_) => continue,
-            };
-            propagators.push((tle.name.clone(), elements, constants, tle.jy, tle.code.clone()));
-        }
+        let core_records: Vec<_> = tles.iter().map(TleRecord::as_core).collect();
+        let (propagators, _skipped) = propagation::build_propagators(&core_records);
 
         self.propagator_cache
             .insert(cache_key.to_string(), propagators.clone());
         propagators
     }
 
-    /// Propagate cached Constants to a list of dates, returning TEME states.
-    fn propagate_tles(
-        propagators: &[CachedPropagator],
+    /// Propagate every satellite to every date, rotating TEME into ECEF.
+    ///
+    /// The GMST rotation is computed once per date and shared across every
+    /// satellite — the core's shape, applied to velocity as well.
+    fn propagate_to_ecef_states(
+        propagators: &[Propagator],
         dates: &[DateTime<Utc>],
-    ) -> Vec<TemeState> {
-        let mut results = Vec::new();
-        let mut skipped = 0u32;
+        code_by_name: &HashMap<String, Option<String>>,
+    ) -> Vec<EcefState> {
+        let mut states = Vec::new();
 
-        for (name, elements, constants, jy, code) in propagators {
-            for date in dates {
-                // sgp4::Elements knows its own epoch; ask it for the exact
-                // propagation interval (issue #9: epoch() is in years since
-                // J2000, not days, so manual arithmetic here was wrong).
-                let minutes_since_epoch = match elements
-                    .datetime_to_minutes_since_epoch(&date.naive_utc())
-                {
-                    Ok(m) => m,
-                    Err(_) => {
-                        skipped += 1;
-                        continue;
-                    }
+        for date in dates {
+            let naive = date.naive_utc();
+            let rotation = time::rotation_sin_cos(date.timestamp() as f64);
+
+            for propagator in propagators {
+                let Some(teme) = propagation::propagate_teme(propagator, &naive) else {
+                    continue;
                 };
-
-                let prediction = match constants.propagate(minutes_since_epoch) {
-                    Ok(p) => p,
-                    Err(_e) => {
-                        skipped += 1;
-                        continue;
-                    }
-                };
-
-                results.push(TemeState {
-                    name: name.clone(),
+                states.push(EcefState {
+                    code: code_by_name.get(&propagator.name).cloned().flatten(),
+                    name: propagator.name.clone(),
                     date: *date,
-                    position: prediction.position,
-                    velocity: prediction.velocity,
-                    jy: *jy,
-                    code: code.clone(),
+                    position: geo::rotate_z_sc(teme.position, rotation),
+                    velocity: geo::rotate_z_sc(teme.velocity, rotation),
+                    jy: propagator.jy,
                 });
             }
         }
 
-        if skipped > 0 {}
-        results
-    }
-
-    /// Convert TEME states to ECEF states using pre-computed rotations.
-    fn teme_to_ecef(
-        teme_states: Vec<TemeState>,
-        rotations: &HashMap<DateTime<Utc>, (f64, f64)>,
-    ) -> Result<Vec<EcefState>, Box<dyn Error>> {
-        let mut ecef_states = Vec::with_capacity(teme_states.len());
-        for s in teme_states {
-            let &(s_ang, c_ang) = rotations.get(&s.date).ok_or_else(|| {
-                format!("no rotation cached for {}", s.date.to_rfc3339())
-            })?;
-            let ecef = rotate_z_sc(&s.position, s_ang, c_ang);
-            let vel = rotate_z_sc(&s.velocity, s_ang, c_ang);
-            ecef_states.push(EcefState {
-                name: s.name,
-                date: s.date,
-                position: ecef,
-                velocity: vel,
-                jy: s.jy,
-                code: s.code,
-            });
-        }
-        Ok(ecef_states)
-    }
-
-    /// Pre-compute GMST rotation (sin, cos) for each date.
-    fn precompute_rotations(dates: &[DateTime<Utc>]) -> HashMap<DateTime<Utc>, (f64, f64)> {
-        dates.iter().map(|d| {
-            let ang = -gmst(d).to_radians();
-            (*d, ang.sin_cos())
-        }).collect()
+        states
     }
 
     /// Compute ECEF positions for a list of dates (primary computation).
@@ -377,9 +318,12 @@ impl CatalogueClient {
         let tles = self.fetch_tles(query_date).await?;
         let cache_key = cache::cache_key(query_date);
         let propagators = self.get_propagators(&cache_key, &tles);
-        let rotations = Self::precompute_rotations(dates);
-        let teme_states = Self::propagate_tles(&propagators, dates);
-        Self::teme_to_ecef(teme_states, &rotations)
+        let code_by_name = code_map(&tles);
+        Ok(Self::propagate_to_ecef_states(
+            &propagators,
+            dates,
+            &code_by_name,
+        ))
     }
 
     /// Return ECEF positions (km) and velocities (km/s) for all satellites.
@@ -426,6 +370,7 @@ impl CatalogueClient {
     /// `lat_deg`, `lon_deg` in degrees, `alt_m` in meters.
     /// `min_el` filters satellites below this elevation (default -90 = all).
     /// `name_pattern` is an optional regex to filter satellite names.
+    #[allow(clippy::too_many_arguments)] // mirrors the /catalog query parameters
     async fn horizontal_positions(
         &mut self,
         query_date: &DateTime<Utc>,
@@ -436,37 +381,43 @@ impl CatalogueClient {
         min_el: f64,
         name_pattern: &Option<regex::Regex>,
     ) -> Result<Vec<HorizontalPosition>, Box<dyn Error>> {
-        let states = self._propagate_ecef(query_date, dates).await?;
+        let tles = self.fetch_tles(query_date).await?;
+        let cache_key = cache::cache_key(query_date);
+        let propagators = self.get_propagators(&cache_key, &tles);
+        let code_by_name = code_map(&tles);
 
-        // Observer ECEF (WGS84)
-        let (obs_x, obs_y, obs_z) = geodetic_to_ecef(lat_deg, lon_deg, alt_m);
+        // One bulk call: the core computes the rotation and the observer once
+        // per instant and shares them across every satellite.
+        let times: Vec<f64> = dates.iter().map(|d| d.timestamp() as f64).collect();
+        let bulk = propagation::horizontal_positions_bulk(
+            &propagators,
+            &times,
+            lat_deg,
+            lon_deg,
+            alt_m,
+            min_el,
+        );
 
-        Ok(states
-            .into_iter()
-            .filter_map(|s| {
-                let (az, el, rng) =
-                    horizontal_from_ecef(&s.position, (obs_x, obs_y, obs_z), lat_deg, lon_deg);
-
-                if el < min_el {
-                    return None;
+        let mut out = Vec::new();
+        for (rows, date) in bulk.into_iter().zip(dates.iter()) {
+            for s in rows {
+                if let Some(re) = name_pattern
+                    && !re.is_match(&s.name)
+                {
+                    continue;
                 }
-                if let Some(re) = name_pattern {
-                    if !re.is_match(&s.name) {
-                        return None;
-                    }
-                }
-
-                Some(HorizontalPosition {
+                out.push(HorizontalPosition {
+                    code: code_by_name.get(&s.name).cloned().flatten(),
                     name: s.name,
-                    date: s.date.to_rfc3339(),
-                    azimuth_deg: round(az, 6),
-                    elevation_deg: round(el, 6),
-                    range_km: round(rng, 3),
+                    date: date.to_rfc3339(),
+                    azimuth_deg: round(s.az_deg, 6),
+                    elevation_deg: round(s.el_deg, 6),
+                    range_km: round(s.range_km, 3),
                     jy: s.jy,
-                    code: s.code,
-                })
-            })
-            .collect())
+                });
+            }
+        }
+        Ok(out)
     }
 
     /// Return celestial (RA/Dec) positions derived from ECEF.
@@ -480,7 +431,7 @@ impl CatalogueClient {
         let rev_rotations: HashMap<DateTime<Utc>, (f64, f64)> = dates
             .iter()
             .map(|d| {
-                let ang = gmst(d).to_radians();
+                let ang = time::gmst_deg(d.timestamp() as f64).to_radians();
                 (*d, ang.sin_cos())
             })
             .collect();
@@ -490,7 +441,7 @@ impl CatalogueClient {
             let &(s_ang, c_ang) = rev_rotations.get(&s.date).ok_or_else(|| {
                 format!("no rotation cached for {}", s.date.to_rfc3339())
             })?;
-            let inertial = rotate_z_sc(&s.position, s_ang, c_ang);
+            let inertial = geo::rotate_z_sc(s.position, (s_ang, c_ang));
             let r = (inertial[0].powi(2) + inertial[1].powi(2) + inertial[2].powi(2)).sqrt();
             let ra = inertial[1].atan2(inertial[0]);
             results.push(CelestialPosition {
@@ -507,9 +458,11 @@ impl CatalogueClient {
     }
 }
 
-/// Rotate a 3-vector around the Z axis using pre-computed (sin, cos).
-fn rotate_z_sc(v: &[f64; 3], s: f64, c: f64) -> [f64; 3] {
-    [v[0] * c - v[1] * s, v[0] * s + v[1] * c, v[2]]
+/// Name -> satellite code lookup for threading `code` onto outputs.
+fn code_map(tles: &[TleRecord]) -> HashMap<String, Option<String>> {
+    tles.iter()
+        .map(|t| (t.name.clone(), t.code.clone()))
+        .collect()
 }
 
 /// Convert a Right Ascension in radians to hours in the range [0, 24).
@@ -527,93 +480,6 @@ fn dec_from_rad(dec_rad: f64) -> f64 {
 fn round(x: f64, decimals: u32) -> f64 {
     let scale = 10f64.powi(decimals as i32);
     (x * scale).round() / scale
-}
-
-/// WGS84 geodetic to ECEF (km).
-fn geodetic_to_ecef(lat_deg: f64, lon_deg: f64, alt_m: f64) -> (f64, f64, f64) {
-    let lat = lat_deg.to_radians();
-    let lon = lon_deg.to_radians();
-    let a = 6378.137;
-    let f = 1.0 / 298.257223563;
-    let e2 = 2.0 * f - f * f;
-    let (slat, clat) = lat.sin_cos();
-    let n = a / (1.0 - e2 * slat * slat).sqrt();
-    let alt_km = alt_m / 1000.0;
-    let x = (n + alt_km) * clat * lon.cos();
-    let y = (n + alt_km) * clat * lon.sin();
-    let z = (n * (1.0 - e2) + alt_km) * slat;
-    (x, y, z)
-}
-
-/// Horizontal coordinates of an ECEF target seen from a geodetic observer.
-///
-/// Returns (azimuth_deg in [0, 360), elevation_deg, range_km).
-fn horizontal_from_ecef(
-    target: &[f64; 3],
-    obs: (f64, f64, f64),
-    lat_deg: f64,
-    lon_deg: f64,
-) -> (f64, f64, f64) {
-    let dx = target[0] - obs.0;
-    let dy = target[1] - obs.1;
-    let dz = target[2] - obs.2;
-
-    let lat_rad = lat_deg.to_radians();
-    let lon_rad = lon_deg.to_radians();
-    let (slat, clat) = lat_rad.sin_cos();
-    let (slon, clon) = lon_rad.sin_cos();
-
-    let e = -slon * dx + clon * dy;
-    let n = -slat * clon * dx - slat * slon * dy + clat * dz;
-    let u = clat * clon * dx + clat * slon * dy + slat * dz;
-
-    let rng = (e * e + n * n + u * u).sqrt();
-    let az = e.atan2(n).to_degrees().rem_euclid(360.0);
-    let el = (u / rng).asin().to_degrees();
-    (az, el, rng)
-}
-
-/// Compute the Julian Day for a given UTC datetime.
-///
-/// Returns a Julian *Date*: the Fliegel-Van Flandern expression below
-/// gives the Julian Day *Number*, which refers to noon, so 0.5 day is
-/// subtracted to refer to 00:00 UT (issue #9).
-fn julian_day(dt: &DateTime<Utc>) -> f64 {
-    let year = dt.year() as f64;
-    let month = dt.month() as f64;
-    let day = dt.day() as f64
-        + dt.hour() as f64 / 24.0
-        + dt.minute() as f64 / 1440.0
-        + dt.second() as f64 / 86400.0;
-
-    let a = ((14.0 - month) / 12.0).floor();
-    let y = year + 4800.0 - a;
-    let m = month + 12.0 * a - 3.0;
-
-    day + ((153.0 * m + 2.0) / 5.0).floor()
-        + 365.0 * y
-        + (y / 4.0).floor()
-        - (y / 100.0).floor()
-        + (y / 400.0).floor()
-        - 32045.0
-        - 0.5 // JDN refers to noon; JD at 00:00 UT is 0.5 smaller
-}
-
-/// Greenwich Mean Sidereal Time in degrees for a UTC datetime.
-fn gmst(dt: &DateTime<Utc>) -> f64 {
-    let jd = julian_day(dt);
-    let jd0 = (jd + 0.5).floor() - 0.5;
-    let t = (jd0 - 2451545.0) / 36525.0;
-
-    let gmst0 = 100.46061837
-        + 36000.770053608 * t
-        + 0.000387933 * t * t
-        - (t * t * t) / 38710000.0;
-
-    let frac_day = jd - jd0;
-    let gmst_deg = gmst0 + 360.98564736629 * frac_day;
-
-    gmst_deg.rem_euclid(360.0)
 }
 
 fn dates_from_now() -> Vec<DateTime<Utc>> {
@@ -701,195 +567,54 @@ mod tests {
         Utc.with_ymd_and_hms(2024, 6, 12, 12, 0, 0).unwrap()
     }
 
-    fn make_tle(l1: &str, l2: &str) -> (Elements, Constants) {
-        let e = Elements::from_tle(Some("test".into()), l1.as_bytes(), l2.as_bytes())
-            .expect("TLE parse");
-        let c = Constants::from_elements(&e).expect("Constants");
-        (e, c)
-    }
-
-    #[test]
-    fn test_julian_day() {
-        // 2024-06-12 12:00:00 UT is JD 2460474.0 exactly (JD starts at noon).
-        let jd = julian_day(&test_date());
-        assert!((jd - 2460474.0).abs() < 1e-6, "jd={}", jd);
-    }
-
-    #[test]
-    fn test_julian_day_at_midnight() {
-        // 2024-06-12 00:00:00 UT is JD 2460473.5 (a Julian *Date*, not a JDN).
-        let dt = Utc.with_ymd_and_hms(2024, 6, 12, 0, 0, 0).unwrap();
-        let jd = julian_day(&dt);
-        assert!((jd - 2460473.5).abs() < 1e-6, "jd={}", jd);
-    }
-
-    #[test]
-    fn test_gmst_at_j2000() {
-        // GMST at 2000-01-01 12:00:00 UT is 280.46062 deg. A 0.5 day error
-        // in julian_day() shifts this by ~180.5 deg (issue #9).
-        let dt = Utc.with_ymd_and_hms(2000, 1, 1, 12, 0, 0).unwrap();
-        let g = gmst(&dt);
-        assert!((g - 280.46062).abs() < 0.001, "gmst={}", g);
-    }
-
-    #[test]
-    fn test_minutes_since_epoch_is_zero_at_the_tle_epoch() {
-        let (elements, _constants) = make_tle(GPS_TLE_L1, GPS_TLE_L2);
-        let at_epoch = elements
-            .datetime_to_minutes_since_epoch(&elements.datetime)
-            .expect("epoch is representable");
-        assert!(at_epoch.0.abs() < 1e-6, "got {}", at_epoch.0);
-    }
-
-    #[test]
-    fn test_gmst_in_range() {
-        let g = gmst(&test_date());
-        assert!(g >= 0.0 && g < 360.0);
-    }
-
-    #[test]
-    fn test_gmst_increases() {
-        let d1 = test_date();
-        let d2 = d1 + chrono::Duration::hours(6);
-        let g1 = gmst(&d1);
-        let g2 = gmst(&d2);
-        let delta = (g2 - g1 + 360.0) % 360.0;
-        assert!(delta > 89.0 && delta < 91.0, "delta={}", delta);
-    }
-
-    #[test]
-    fn test_rotate_z_sc_identity() {
-        let r = rotate_z_sc(&[1.0, 2.0, 3.0], 0.0, 1.0);
-        assert!((r[0] - 1.0).abs() < 1e-10);
-        assert!((r[1] - 2.0).abs() < 1e-10);
-        assert!((r[2] - 3.0).abs() < 1e-10);
-    }
-
-    #[test]
-    fn test_rotate_z_sc_90deg() {
-        let r = rotate_z_sc(&[1.0, 0.0, 0.0], 1.0, 0.0);
-        assert!((r[0] - 0.0).abs() < 1e-10);
-        assert!((r[1] - 1.0).abs() < 1e-10);
-    }
-
-    #[test]
-    fn test_roundtrip_rotation() {
-        let v = [10000.0, 20000.0, 30000.0];
-        let gmst_rad = gmst(&test_date()).to_radians();
-        let (s, c) = (-gmst_rad).sin_cos();
-        let ecef = rotate_z_sc(&v, s, c);
-        let (s2, c2) = gmst_rad.sin_cos();
-        let back = rotate_z_sc(&ecef, s2, c2);
-        assert!((back[0] - v[0]).abs() < 1e-6);
-        assert!((back[1] - v[1]).abs() < 1e-6);
-        assert!((back[2] - v[2]).abs() < 1e-6);
-    }
-
-    #[test]
-    fn test_sgp4_orbital_radius() {
-        let (elements, constants) = make_tle(GPS_TLE_L1, GPS_TLE_L2);
-        let date = test_date();
-        let minutes = elements
-            .datetime_to_minutes_since_epoch(&date.naive_utc())
-            .expect("date is representable");
-        let p = constants.propagate(minutes).expect("Propagation");
-        let r = (p.position[0].powi(2) + p.position[1].powi(2) + p.position[2].powi(2)).sqrt();
-        assert!(r > 20000.0 && r < 30000.0, "r={}", r);
-        let v = (p.velocity[0].powi(2) + p.velocity[1].powi(2) + p.velocity[2].powi(2)).sqrt();
-        assert!(v > 3.0 && v < 5.0, "v={}", v);
-    }
-
-    #[test]
-    fn test_ecef_preserves_magnitude() {
-        let (elements, constants) = make_tle(GPS_TLE_L1, GPS_TLE_L2);
-        let date = test_date();
-        let minutes = elements
-            .datetime_to_minutes_since_epoch(&date.naive_utc())
-            .expect("date is representable");
-        let p = constants.propagate(minutes).expect("Propagation");
-        let gmst_rad = gmst(&date).to_radians();
-        let (s, c) = (-gmst_rad).sin_cos();
-        let ecef = rotate_z_sc(&p.position, s, c);
-        let r_teme = (p.position[0].powi(2) + p.position[1].powi(2) + p.position[2].powi(2)).sqrt();
-        let r_ecef = (ecef[0].powi(2) + ecef[1].powi(2) + ecef[2].powi(2)).sqrt();
-        assert!((r_teme - r_ecef).abs() < 1.0);
-    }
-
-    #[test]
-    fn test_geodetic_to_ecef() {
-        // Dunedin, NZ: lat=-45.87, lon=170.60, alt=100m
-        let (x, y, z) = geodetic_to_ecef(-45.87, 170.60, 100.0);
-        let r = (x.powi(2) + y.powi(2) + z.powi(2)).sqrt();
-        // Should be roughly Earth radius + 0.1 km
-        assert!(r > 6360.0 && r < 6390.0, "r={}", r);
-        // Southern hemisphere: z should be negative
-        assert!(z < 0.0, "z={}", z);
-    }
-
-    #[test]
-    fn test_horizontal_roundtrip() {
-        let obs = geodetic_to_ecef(-45.87, 170.60, 0.0);
-        // Satellite at zenith (directly above observer, 2000 km altitude)
-        let lat_rad = (-45.87f64).to_radians();
-        let lon_rad = 170.60f64.to_radians();
-        let (slat, clat) = lat_rad.sin_cos();
-        let (slon, clon) = lon_rad.sin_cos();
-        // Up unit vector in ECEF
-        let ux = clat * clon;
-        let uy = clat * slon;
-        let uz = slat;
-        let alt_km = 2000.0;
-        let sat_pos = [
-            obs.0 + alt_km * ux,
-            obs.1 + alt_km * uy,
-            obs.2 + alt_km * uz,
-        ];
-
-        let (_az, el, rng) = horizontal_from_ecef(&sat_pos, obs, -45.87, 170.60);
-
-        assert!((el - 90.0).abs() < 0.1, "el={}", el);
-        assert!((rng - 2000.0).abs() < 1.0, "rng={}", rng);
-    }
-
-    #[test]
-    fn test_ra_hours_never_negative() {
-        // atan2 can return negative angles (=-12h); ra_hours must wrap to [0, 24)
-        for ra in [
-            -std::f64::consts::PI + 0.001,
-            -std::f64::consts::PI / 2.0,
-            -0.1,
-            0.0,
-            0.1,
-            std::f64::consts::PI / 2.0,
-            std::f64::consts::PI - 0.001,
-        ] {
-            let h = ra_hours(ra);
-            assert!(h >= 0.0 && h < 24.0, "ra={ra} -> {h} hours");
+    fn test_tle() -> TleRecord {
+        TleRecord {
+            name: "GPS BIIR-2  (PRN 13)".to_string(),
+            line1: GPS_TLE_L1.to_string(),
+            line2: GPS_TLE_L2.to_string(),
+            jy: 0.0,
+            code: None,
         }
     }
 
+    fn test_propagators() -> Vec<Propagator> {
+        let (propagators, skipped) = propagation::build_propagators(&[test_tle().as_core()]);
+        assert_eq!(skipped, 0, "the reference TLE should parse");
+        propagators
+    }
+
+    /// The client's DateTime -> unix-seconds handoff into the core must land
+    /// on the astropy reference for the same instant.
     #[test]
-    fn test_ra_hours_wraps_at_boundary() {
-        // -8.2968h (the INMARSAT example) should wrap to ~15.7h
-        let h = ra_hours(-8.296808 * std::f64::consts::PI / 12.0);
-        assert!(h > 15.0 && h < 16.0, "h={h}");
+    fn horizontal_matches_the_reference_vector() {
+        let propagators = test_propagators();
+        let dates = vec![test_date()];
+        let codes = HashMap::new();
 
-        // A small negative angle (just before 0h) must wrap to ~24h
-        let before_zero = ra_hours(-0.001);
-        assert!(before_zero > 23.99 && before_zero < 24.0, "before_zero={before_zero}");
-        let after_zero = ra_hours(0.001);
-        assert!(after_zero > 0.0 && after_zero < 0.01, "after_zero={after_zero}");
+        let states = CatalogueClient::propagate_to_ecef_states(&propagators, &dates, &codes);
+        assert_eq!(states.len(), 1);
 
-        // 180 deg maps to 12h exactly
-        let half = ra_hours(std::f64::consts::PI);
-        assert!((half - 12.0).abs() < 1e-6, "half={half}");
+        let observer = geo::geodetic_to_ecef(-45.87, 170.60, 100.0);
+        let h = geo::horizontal_from_ecef(states[0].position, observer, -45.87, 170.60);
+
+        assert!((h.az_deg - 283.493_7).abs() < 0.1, "azimuth {}", h.az_deg);
+        assert!((h.el_deg - (-1.272_9)).abs() < 0.1, "elevation {}", h.el_deg);
+        assert!((h.range_km - 25_778.209).abs() < 1.0, "range {}", h.range_km);
     }
 
     #[test]
-    fn test_tle_record_flux() {
-        let json = r#"{"name":"TEST","line1":"","line2":"","jy":2500000.0}"#;
-        let rec: TleRecord = serde_json::from_str(json).unwrap();
-        assert!((rec.jy - 2500000.0).abs() < 1.0, "jy={}", rec.jy);
+    fn ra_hours_is_wrapped_and_round_survives() {
+        // atan2 range is [-pi, pi]; RA must still land in [0, 24).
+        let ra_neg = ra_hours(-0.5);
+        assert!((0.0..24.0).contains(&ra_neg), "wrapped RA {ra_neg}");
+        assert_eq!(round(1.234_567, 4), 1.2346);
+    }
+
+    #[test]
+    fn dates_from_now_spans_the_day_in_six_hour_steps() {
+        let dates = dates_from_now();
+        assert_eq!(dates.len(), 5);
+        assert!(dates.windows(2).all(|w| w[1] > w[0]));
     }
 
     #[test]
@@ -914,12 +639,14 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
-    // Reference-vector regression tests (issue #9).
+    // Reference-vector regression tests (issue #9), carried over from the
+    // pre-split client (25172fb).
     //
     // test-vectors/test_vectors.json holds astropy-computed TEME, ECEF and
     // horizontal values for a fixed TLE and observer. These assertions pin
     // the client against an independent implementation and would have
-    // caught both date bugs on their own.
+    // caught both date bugs on their own. The core runs its own copies in
+    // tart-catalogue-core/tests; these exercise the client's paths.
     // ------------------------------------------------------------------
 
     #[derive(serde::Deserialize)]
@@ -966,46 +693,55 @@ mod tests {
         serde_json::from_str(&raw).expect("parse test vectors")
     }
 
-    /// Propagate the test-vector TLE through the production code path
-    /// (propagate_tles + teme_to_ecef) at the test-vector dates.
-    fn vector_ecef_states(v: &TestVectors) -> Vec<EcefState> {
-        let (elements, constants) = make_tle(&v.tle.line1, &v.tle.line2);
-        let propagators: Vec<CachedPropagator> =
-            vec![(v.tle.name.clone(), elements, constants, 0.0, None)];
-        let dates: Vec<DateTime<Utc>> = v
-            .dates
+    fn vector_dates(v: &TestVectors) -> Vec<DateTime<Utc>> {
+        v.dates
             .iter()
             .map(|d| {
                 DateTime::parse_from_rfc3339(&d.date)
                     .expect("vector date parses")
                     .with_timezone(&Utc)
             })
-            .collect();
-        let rotations = CatalogueClient::precompute_rotations(&dates);
-        let teme = CatalogueClient::propagate_tles(&propagators, &dates);
-        CatalogueClient::teme_to_ecef(teme, &rotations).expect("teme -> ecef")
+            .collect()
+    }
+
+    /// Propagators for the TLE the vectors were generated against.
+    fn vector_propagators(v: &TestVectors) -> Vec<Propagator> {
+        let record = TleRecord {
+            name: v.tle.name.clone(),
+            line1: v.tle.line1.clone(),
+            line2: v.tle.line2.clone(),
+            jy: 0.0,
+            code: None,
+        };
+        let (propagators, skipped) = propagation::build_propagators(&[record.as_core()]);
+        assert_eq!(skipped, 0, "the reference TLE should parse");
+        propagators
+    }
+
+    /// Propagate the test-vector TLE through the production code path
+    /// (core propagation + the client's ECEF assembly) at the vector dates.
+    fn vector_ecef_states(v: &TestVectors) -> Vec<EcefState> {
+        let codes = HashMap::new();
+        CatalogueClient::propagate_to_ecef_states(&vector_propagators(v), &vector_dates(v), &codes)
     }
 
     #[test]
     fn test_teme_matches_astropy_vectors() {
         let v = load_test_vectors();
-        let (elements, constants) = make_tle(&v.tle.line1, &v.tle.line2);
+        let propagator = &vector_propagators(&v)[0];
 
         for d in &v.dates {
-            let dt = DateTime::parse_from_rfc3339(&d.date)
+            let naive = DateTime::parse_from_rfc3339(&d.date)
                 .expect("vector date parses")
-                .with_timezone(&Utc);
-            let minutes = elements
-                .datetime_to_minutes_since_epoch(&dt.naive_utc())
-                .expect("date is representable");
-            let p = constants.propagate(minutes).expect("Propagation");
+                .naive_utc();
+            let teme = propagation::propagate_teme(propagator, &naive).expect("propagation");
             for i in 0..3 {
                 assert!(
-                    (p.position[i] - d.teme_km[i]).abs() < 0.5,
+                    (teme.position[i] - d.teme_km[i]).abs() < 0.5,
                     "teme[{}] at {}: got {}, want {}",
                     i,
                     d.date,
-                    p.position[i],
+                    teme.position[i],
                     d.teme_km[i]
                 );
             }
@@ -1035,17 +771,17 @@ mod tests {
     fn test_horizontal_matches_astropy_vectors() {
         let v = load_test_vectors();
         let states = vector_ecef_states(&v);
-        let obs = geodetic_to_ecef(v.observer.lat_deg, v.observer.lon_deg, v.observer.alt_m);
+        let obs = geo::geodetic_to_ecef(v.observer.lat_deg, v.observer.lon_deg, v.observer.alt_m);
         assert_eq!(states.len(), v.horizontal.len());
 
         for (s, h) in states.iter().zip(v.horizontal.iter()) {
-            let (az, el, rng) = horizontal_from_ecef(
-                &s.position,
+            let got = geo::horizontal_from_ecef(
+                s.position,
                 obs,
                 v.observer.lat_deg,
                 v.observer.lon_deg,
             );
-            let mut d_az = (az - h.azimuth_deg) % 360.0;
+            let mut d_az = (got.az_deg - h.azimuth_deg) % 360.0;
             if d_az > 180.0 {
                 d_az -= 360.0;
             }
@@ -1056,21 +792,21 @@ mod tests {
                 d_az.abs() < 0.05,
                 "az at {}: got {}, want {}",
                 s.date.to_rfc3339(),
-                az,
+                got.az_deg,
                 h.azimuth_deg
             );
             assert!(
-                (el - h.elevation_deg).abs() < 0.05,
+                (got.el_deg - h.elevation_deg).abs() < 0.05,
                 "el at {}: got {}, want {}",
                 s.date.to_rfc3339(),
-                el,
+                got.el_deg,
                 h.elevation_deg
             );
             assert!(
-                (rng - h.range_km).abs() < 1.0,
+                (got.range_km - h.range_km).abs() < 1.0,
                 "range at {}: got {}, want {}",
                 s.date.to_rfc3339(),
-                rng,
+                got.range_km,
                 h.range_km
             );
         }

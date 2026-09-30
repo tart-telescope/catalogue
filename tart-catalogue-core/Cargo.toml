@@ -1,0 +1,30 @@
+[package]
+name = "tart-catalogue-core"
+version = "0.1.0"
+edition = "2024"
+description = "TLE propagation and coordinate transforms for the TART catalogue (pure computation, no I/O)"
+authors = ["Tim Molteno <tim@elec.ac.nz>"]
+license = "GPL-3.0-only"
+repository = "https://github.com/tart-telescope/catalogue"
+homepage = "https://github.com/tart-telescope/catalogue"
+keywords = ["tart", "satellite", "tle", "sgp4", "astronomy"]
+categories = ["science"]
+
+[lib]
+name = "tart_catalogue_core"
+
+[dependencies]
+# Pure-Rust SGP4 propagation.
+sgp4 = "2"
+
+# Only used to hand NaiveDateTime to sgp4's datetime_to_minutes_since_epoch;
+# kept on a no-default-features footing so the crate builds for
+# wasm32-unknown-unknown, where the client crate's tokio/reqwest stack cannot.
+chrono = { version = "0.4", default-features = false, features = ["std"] }
+
+# TleRecord crosses the /ephemerides wire format in both directions: the
+# server and the clients serialise it, the wasm wrapper deserialises it.
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+serde_json = "1"

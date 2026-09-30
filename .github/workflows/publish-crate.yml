@@ -11,9 +11,6 @@ jobs:
     permissions:
       id-token: write
       contents: read
-    defaults:
-      run:
-        working-directory: tart-catalog-client-rs
     steps:
       - uses: actions/checkout@v6
 
@@ -21,7 +18,43 @@ jobs:
 
       - uses: rust-lang/crates-io-auth-action@v1.0.4
         id: auth
-      - run: cargo test
-      - run: cargo publish
+
+      # Whole workspace: the core's astropy parity vectors are the
+      # correctness gate for both crates.
+      - run: cargo test --workspace
+
+      # crates.io rejects a version that already exists, so a release that
+      # bumps only one crate would otherwise abort the job before the other
+      # publishes. This resolves each local version against the sparse
+      # index — the same source cargo resolves against; the path layout is
+      # <first 2>/<next 2>/<name> for names of 4+ characters.
+      - name: Which versions are already on crates.io
+        id: published
+        run: |
+          for crate in tart-catalogue-core tart-catalogue-client; do
+            version=$(cargo metadata --no-deps --format-version 1 \
+              | jq -r ".packages[] | select(.name == \"$crate\") | .version")
+            index="$(printf '%s' "$crate" | cut -c1-2)/$(printf '%s' "$crate" | cut -c3-4)/$crate"
+            if curl -fsSL -A tart-telescope-publish-workflow \
+                 "https://index.crates.io/$index" \
+                 | grep -q "\"vers\":\"$version\""; then
+              echo "- $crate $version: already published, skipping" | tee -a "$GITHUB_STEP_SUMMARY"
+              echo "$crate=published" >> "$GITHUB_OUTPUT"
+            else
+              echo "- $crate $version: new, publishing" | tee -a "$GITHUB_STEP_SUMMARY"
+              echo "$crate=new" >> "$GITHUB_OUTPUT"
+            fi
+          done
+
+      # The client depends on the core, so the core goes first. Whichever
+      # step is skipped here already exists on crates.io.
+      - name: Publish tart-catalogue-core
+        if: steps.published.outputs['tart-catalogue-core'] == 'new'
+        run: cargo publish -p tart-catalogue-core
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+      - name: Publish tart-catalogue-client
+        if: steps.published.outputs['tart-catalogue-client'] == 'new'
+        run: cargo publish -p tart-catalogue-client
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}

@@ -1,0 +1,6 @@
+[workspace]
+resolver = "3"
+members = [
+    "tart-catalogue-core",
+    "tart-catalog-client-rs",
+]

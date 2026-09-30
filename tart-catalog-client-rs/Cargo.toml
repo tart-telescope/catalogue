@@ -1,6 +1,6 @@
 [package]
 name = "tart-catalogue-client"
-version = "0.5.2"
+version = "0.6.0"
 edition = "2024"
 description = "Rust client for the TART catalogue /ephemerides endpoint"
 authors = ["Tim Molteno <tim@elec.ac.nz>"]
@@ -16,6 +16,9 @@ chrono = { version = "0.4", features = ["serde"] }
 reqwest = { version = "0.13", features = ["json"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-sgp4 = "2"
 regex = { version = "1", default-features = false, features = ["std"] }
 tokio = { version = "1", features = ["full"] }
+
+# Pure propagation/coordinate maths; everything I/O-shaped stays here.
+# The path works in-repo, the version constraint is what cargo publish uses.
+tart-catalogue-core = { path = "../tart-catalogue-core", version = "0.1" }
