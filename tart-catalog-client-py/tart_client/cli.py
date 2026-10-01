@@ -112,8 +112,8 @@ def main():
         "count",
         nargs="?",
         type=int,
-        default=1000,
-        help="Number of positions to request (default: 1000)",
+        default=100,
+        help="Number of positions to request (default: 100)",
     )
     p_bench.set_defaults(func=cmd_benchmark)
 

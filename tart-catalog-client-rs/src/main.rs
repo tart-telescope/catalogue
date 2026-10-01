@@ -513,7 +513,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
             println!("{}", serde_json::to_string_pretty(&positions)?);
         }
         "benchmark" | "bench" => {
-            let count: usize = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(1000);
+            // 100 queries over the one-week window is ~100 distinct hourly
+            // cache buckets: at or under the cache's MAX_ENTRIES, so a default
+            // run never evicts and re-fetches its own entries. 1000 was ~168
+            // buckets and thrashed.
+            let count: usize = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(100);
             run_benchmark(&client, count).await?;
         }
         _ => {
@@ -523,6 +527,34 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
 
     Ok(())
+}
+
+/// The benchmark's summary JSON.
+///
+/// `elapsed_secs` is floored at 1 ns: a fully cache-hit run can complete
+/// below timer resolution and measure as exactly 0.0 s, and dividing by that
+/// turns the rates infinite — which serde_json renders as `null`
+/// (`queries_per_sec`) and saturates to `u64::MAX` (`positions_per_sec`)
+/// instead of numbers.
+fn benchmark_stats(
+    server: &str,
+    queries: usize,
+    total_positions: usize,
+    elapsed_secs: f64,
+    cache_entries: usize,
+) -> serde_json::Value {
+    let secs = elapsed_secs.max(1e-9);
+
+    serde_json::json!({
+        "server": server,
+        "queries": queries,
+        "total_positions": total_positions,
+        "elapsed_s": (secs * 100.0).round() / 100.0,
+        "positions_per_sec": (total_positions as f64 / secs).round() as u64,
+        "queries_per_sec": ((queries as f64 / secs) * 10.0).round() / 10.0,
+        "avg_query_ms": ((secs / queries as f64 * 1000.0) * 10.0).round() / 10.0,
+        "cache_entries": cache_entries,
+    })
 }
 
 async fn run_benchmark(client: &CatalogueClient, count: usize) -> Result<(), Box<dyn Error>> {
@@ -538,18 +570,14 @@ async fn run_benchmark(client: &CatalogueClient, count: usize) -> Result<(), Box
         total_positions += client.count_satellites(&dt).await?;
     }
     let elapsed = start.elapsed();
-    let secs = elapsed.as_secs_f64();
 
-    let result = serde_json::json!({
-        "server": client.base_url,
-        "queries": n,
-        "total_positions": total_positions,
-        "elapsed_s": (secs * 100.0).round() / 100.0,
-        "positions_per_sec": (total_positions as f64 / secs).round() as u64,
-        "queries_per_sec": ((n as f64 / secs) * 10.0).round() / 10.0,
-        "avg_query_ms": ((secs / n as f64 * 1000.0) * 10.0).round() / 10.0,
-        "cache_entries": cache::count(),
-    });
+    let result = benchmark_stats(
+        &client.base_url,
+        n,
+        total_positions,
+        elapsed.as_secs_f64(),
+        cache::count(),
+    );
     println!("{}", serde_json::to_string_pretty(&result)?);
 
     Ok(())
@@ -615,6 +643,34 @@ mod tests {
         let dates = dates_from_now();
         assert_eq!(dates.len(), 5);
         assert!(dates.windows(2).all(|w| w[1] > w[0]));
+    }
+
+    /// A fully cache-hit run can measure as exactly 0.0 s; the rate fields
+    /// must stay finite JSON numbers, not `null` / `u64::MAX`.
+    #[test]
+    fn benchmark_stats_survive_a_zero_elapsed_run() {
+        let stats = benchmark_stats("https://example", 10, 1390, 0.0, 35);
+
+        assert!(stats["queries_per_sec"].is_u64() || stats["queries_per_sec"].is_f64());
+        assert!(stats["positions_per_sec"].is_u64());
+        assert!(
+            stats["positions_per_sec"].as_u64().unwrap() < u64::MAX / 2,
+            "positions_per_sec saturated: {}",
+            stats["positions_per_sec"]
+        );
+        assert_eq!(stats["elapsed_s"].as_f64().unwrap(), 0.0);
+        assert_eq!(stats["avg_query_ms"].as_f64().unwrap(), 0.0);
+    }
+
+    #[test]
+    fn benchmark_stats_computes_the_expected_rates() {
+        let stats = benchmark_stats("https://example", 10, 1390, 5.0, 35);
+
+        assert_eq!(stats["elapsed_s"].as_f64().unwrap(), 5.0);
+        assert_eq!(stats["positions_per_sec"].as_u64().unwrap(), 278);
+        assert_eq!(stats["queries_per_sec"].as_f64().unwrap(), 2.0);
+        assert_eq!(stats["avg_query_ms"].as_f64().unwrap(), 500.0);
+        assert_eq!(stats["cache_entries"].as_u64().unwrap(), 35);
     }
 
     #[test]
