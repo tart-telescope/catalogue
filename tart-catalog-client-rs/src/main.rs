@@ -513,7 +513,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
             println!("{}", serde_json::to_string_pretty(&positions)?);
         }
         "benchmark" | "bench" => {
-            let count: usize = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(1000);
+            // 100 queries over the one-week window is ~100 distinct hourly
+            // cache buckets: at or under the cache's MAX_ENTRIES, so a default
+            // run never evicts and re-fetches its own entries. 1000 was ~168
+            // buckets and thrashed.
+            let count: usize = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(100);
             run_benchmark(&client, count).await?;
         }
         _ => {

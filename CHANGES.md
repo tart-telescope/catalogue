@@ -9,6 +9,13 @@
   `positions_per_sec` to `u64::MAX`. The elapsed time is now floored at 1 ns
   so the rate fields always serialize as finite numbers.
 
+### Changed
+- `benchmark` default count reduced from 1000 to 100 in both clients. 1000
+  queries over the benchmark's one-week window land in ~168 distinct hourly
+  TLE-cache buckets, more than the cache's 100-entry LRU limit, so the
+  default run evicted and re-fetched its own entries against the live
+  server; 100 stays within the cache.
+
 ## v0.6.0
 
 ### Added
