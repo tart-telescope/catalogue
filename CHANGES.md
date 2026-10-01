@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- Rust client `benchmark`: a run that completes below timer resolution
+  (a fully cache-hit `bench` with a small count) measured as exactly 0.0 s,
+  turning `queries_per_sec` into JSON `null` and saturating
+  `positions_per_sec` to `u64::MAX`. The elapsed time is now floored at 1 ns
+  so the rate fields always serialize as finite numbers.
+
 ## v0.6.0
 
 ### Added
