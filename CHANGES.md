@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.6.1
 
 ### Fixed
 - Rust client `benchmark`: a run that completes below timer resolution
