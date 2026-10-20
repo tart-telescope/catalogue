@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.6.4
+
+### Changed
+- The Python and Rust clients are released in lockstep and always share a
+  version number. `invoke release` sets the Python client version to the Rust
+  client version, so the two packages can no longer drift apart (which
+  previously caused PyPI to reject the re-published Python wheel and fail the
+  publish workflow).
+
 ## v0.6.3
 
 ### Fixed
