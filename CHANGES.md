@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.6.3
+
+### Fixed
+- Python client publish: the client is now versioned independently and
+  bumped with `--bump-py`, so `package.yaml` builds a fresh filename instead
+  of re-publishing an existing `tart_catalogue_client` version (PyPI rejects
+  duplicate filenames with HTTP 400).
+
 ## v0.6.2
 
 ### Added
