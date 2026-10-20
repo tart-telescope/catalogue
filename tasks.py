@@ -16,19 +16,20 @@ Usage (from the catalogue repo root, in a venv with invoke + plumbum):
 
     invoke version                          # show what would be tagged/bumped
     invoke test                             # the pre-release gate only
-    invoke release                          # bump client, stamp CHANGES, tag + push
+    invoke release                          # bump client + python (lockstep), stamp CHANGES, tag + push
     invoke release --no-bump                # tag the current version as-is
     invoke release --version 0.6.2          # explicit tag (implies --no-bump)
     invoke release --bump-core              # also bump the core crate (patch)
-    invoke release --bump-py                # also bump the Python client (patch)
     invoke release --skip-tests             # tag without the local gate
 
 Versioning model: the git tag tracks the *client crate* version
 (`tart-catalog-client-rs/Cargo.toml`), which is the headline version in
-CHANGES.md. The core crate and the Python client version independently and
-are only bumped when asked (--bump-core / --bump-py), because the crates.io
-workflow publishes each crate only when its version is new on the index --
-bumping one that has not changed would be a no-op publish anyway.
+CHANGES.md. The Python client is released in lockstep and always shares the
+same version number as the Rust client, so the two packages cannot drift
+apart. The core crate versions independently and is bumped only when asked
+(--bump-core), because the crates.io workflow publishes each crate only when
+its version is new on the index -- bumping one that has not changed would be
+a no-op publish anyway.
 
 The release chain:
   1. pre-release gate: `cargo test --workspace` (the core's astropy parity
@@ -283,10 +284,10 @@ def version(c) -> None:
     print(f"catalogue clients:")
     print(f"  rust client  (tart-catalogue-client)  {v['client']}  "
           f"-> tag tracks this; --no-bump to tag as-is")
+    print(f"  python client (tart-catalogue-client-py) {v['py']}  "
+          f"-> follows the rust client (lockstep)")
     print(f"  rust core    (tart-catalogue-core)    {v['core']}   "
           f"(bump only with --bump-core)")
-    print(f"  python client (tart-catalogue-client-py) {v['py']}  "
-          f"(bump only with --bump-py)")
     print(f"  CHANGES.md '## Unreleased' -> '## v{_bump_patch(v['client'])}' "
           f"on a default release")
 
@@ -303,14 +304,14 @@ def release(c,
             version: str | None = None,
             bump: bool = True,
             bump_core: bool = False,
-            bump_py: bool = False,
             skip_tests: bool = False) -> None:
     """Run the full catalogue release chain (Python + Rust together).
 
     1. run the pre-release gate (cargo workspace + Python client tests);
        skip with --skip-tests for an emergency re-tag only.
-    2. bump versions (client by default; core/py only with --bump-core /
-       --bump-py), stamp CHANGES.md, refresh Cargo.lock, and commit
+    2. bump versions: the Rust client patch version, and the Python client in
+       lockstep (both always share a version number). The core is bumped only
+       with --bump-core. Stamps CHANGES.md, refreshes Cargo.lock, and commits
        `chore: bump version to X.Y.Z`. --no-bump skips the bump; --version
        X.Y.Z tags exactly that (implies --no-bump).
     3. annotated tag vX.Y.Z and push the branch + tag; the tag fires BOTH
@@ -342,11 +343,13 @@ def release(c,
             _write_crate_version(CORE_DIR / "Cargo.toml", new_core)
             _bump_core_dependency_pin(CRATE_DIR / "Cargo.toml", new_core)
 
-        new_py = v["py"]
-        if bump_py:
-            new_py = _bump_patch(v["py"])
-            print(f"=== bumping python client to {new_py}")
-            _write_crate_version(PYPROJECT, new_py)
+        # The Python client is released in lockstep with the Rust client so
+        # the two packages always share a version number (they drifted apart
+        # once when only the Rust side was bumped, and PyPI then rejected the
+        # re-published Python wheel). Set it to the client version directly.
+        if v["py"] != new_client:
+            print(f"=== setting python client to {new_client} (lockstep with rust)")
+            _write_crate_version(PYPROJECT, new_client)
 
         if _stamp_changelog(new_client):
             print(f"=== CHANGES.md: ## Unreleased -> ## v{new_client}")
