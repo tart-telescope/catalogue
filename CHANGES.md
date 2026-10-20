@@ -2,6 +2,12 @@
 
 ## v0.6.2
 
+### Added
+- Release tooling (`tasks.py`, `RELEASE.md`): `invoke release` runs the
+  pre-release gate (cargo workspace + Python client tests), bumps versions,
+  stamps `CHANGES.md`, tags `vX.Y.Z`, and monitors the PyPI and crates.io
+  publish workflows. No changes to the published client code.
+
 ## v0.6.1
 
 ### Fixed
