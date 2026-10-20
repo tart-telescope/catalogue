@@ -33,4 +33,7 @@ packages = ["tart_client"]
 [dependency-groups]
 dev = [
     "pytest>=8.0",
+    # Release tooling: tasks.py (`invoke version|test|release`) at the repo root.
+    "invoke>=3.0,<4",
+    "plumbum>=2.0,<3",
 ]
