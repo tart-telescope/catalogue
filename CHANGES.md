@@ -1,5 +1,28 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- Python client `celestial_positions()` returned barycentric RA/Dec: every
+  satellite landed within ~0.03° of the Earth's own direction as seen from the
+  Sun, because ECEF positions were transformed to `ICRS`, which is centred on
+  the Solar System barycentre. Positions are now transformed to `GCRS`
+  (geocentric) instead, so each satellite gets its real direction (issue #14).
+  The reference vectors in `test-vectors/` carried the same error and have been
+  regenerated; a regression test pins the fix.
+
+### Added
+- `celestial_positions()` accepts optional `lat`/`lon`/`alt` and then returns a
+  *topocentric* RA/Dec, computed by subtracting the observer's `GCRS` position
+  from the satellite's (a pure rotation). Without an observer the result is
+  geocentric, matching the Rust client. The CLI gains `--lat`/`--lon`/`--alt`
+  for the `celestial` subcommand.
+
+### Changed
+- `celestial_positions()` no longer uses the `ICRS` frame at all. Callers that
+  need an inertial direction get `GCRS`; the values change from the previous
+  (incorrect) ones.
+
 ## v0.6.4
 
 ### Changed

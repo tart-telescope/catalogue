@@ -4,7 +4,7 @@ CLI entry points for the TART catalogue client.
 
 Usage:
     uv run python -m tart_client.cli ecef [--date DATE] [--url URL]
-    uv run python -m tart_client.cli celestial [--date DATE] [--url URL]
+    uv run python -m tart_client.cli celestial [--date DATE] [--lat LAT --lon LON] [--url URL]
     uv run python -m tart_client.cli benchmark [--url URL]
 """
 
@@ -26,7 +26,9 @@ def cmd_ecef(args):
 
 def cmd_celestial(args):
     client = CatalogueClient(base_url=args.url)
-    results = client.celestial_positions(dt=args.date)
+    results = client.celestial_positions(
+        dt=args.date, lat=args.lat, lon=args.lon, alt=args.alt
+    )
     print(json.dumps(results, indent=2))
 
 
@@ -92,7 +94,24 @@ def main():
     p_ecef = sub.add_parser("ecef", help="Return ECEF positions")
     p_ecef.set_defaults(func=cmd_ecef)
 
-    p_cel = sub.add_parser("celestial", help="Return celestial (RA/Dec) positions")
+    p_cel = sub.add_parser(
+        "celestial", help="Return celestial (RA/Dec) positions (geocentric by default)"
+    )
+    p_cel.add_argument(
+        "--lat",
+        type=float,
+        default=None,
+        help="Observer latitude (deg) for topocentric RA/Dec; requires --lon",
+    )
+    p_cel.add_argument(
+        "--lon",
+        type=float,
+        default=None,
+        help="Observer longitude (deg) for topocentric RA/Dec; requires --lat",
+    )
+    p_cel.add_argument(
+        "--alt", type=float, default=0.0, help="Observer altitude (m)"
+    )
     p_cel.set_defaults(func=cmd_celestial)
 
     p_horiz = sub.add_parser("horizontal", help="Return horizontal (Az/El) positions")

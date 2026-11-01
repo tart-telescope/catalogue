@@ -15,8 +15,11 @@ uv sync
 # ECEF positions (default)
 uv run python -m tart_client.cli ecef
 
-# Celestial (RA/Dec) positions
+# Celestial (RA/Dec) positions, geocentric
 uv run python -m tart_client.cli celestial
+
+# Topocentric RA/Dec as seen from an observer
+uv run python -m tart_client.cli celestial --lat -45.87 --lon 170.60 --alt 100
 
 # Horizontal (Az/El) positions
 uv run python -m tart_client.cli horizontal
@@ -76,10 +79,15 @@ Transform: SGP4 → TEME → rotate by −GMST → ECEF.
 ### Celestial positions (RA/Dec)
 
 ```python
+# Geocentric: direction as seen from the centre of the Earth
 positions = client.celestial_positions()
+
+# Topocentric: direction as seen from an observer (what a telescope needs)
+positions = client.celestial_positions(lat=-45.87, lon=170.60, alt=100.0)
 ```
 
-Derived from ECEF. Returns ICRS right ascension and declination:
+Derived from ECEF. Returns right ascension and declination, geocentric by
+default and topocentric when `lat`/`lon` are given:
 
 ```json
 [
@@ -92,7 +100,15 @@ Derived from ECEF. Returns ICRS right ascension and declination:
 ]
 ```
 
-Transform: ECEF → ITRS → ICRS (via astropy).
+`distance_km` is the distance from the geocentre, or the range from the
+observer in topocentric mode.
+
+Transform: ECEF → ITRS → GCRS (geocentric). In topocentric mode the
+observer's GCRS position is subtracted from the satellite's and the direction
+of that baseline is returned. The `ICRS` frame is deliberately not used: it
+is centred on the Solar System barycentre, so transforming a satellite
+position into ICRS adds the Earth's ~1 AU offset and returns the Earth's own
+direction as seen from the Sun for every satellite (issue #14).
 
 ### Horizontal positions (Az/El)
 
@@ -142,7 +158,7 @@ Server fetch requests are logged to stderr with the request datetime.
 | Method | Input Frame | Output Frame | Transform |
 |---|---|---|---|
 | `ecef_positions` | TEME (SGP4) | ITRS (ECEF) | Rotate by −GMST |
-| `celestial_positions` | ITRS (ECEF) | ICRS (RA/Dec) | astropy ITRS→ICRS |
+| `celestial_positions` | ITRS (ECEF) | GCRS (RA/Dec), geocentric or topocentric | astropy ITRS→GCRS |
 | `horizontal_positions` | ITRS (ECEF) | ENU → Az/El | WGS84 geodetic + rotation |
 
 ## Testing
