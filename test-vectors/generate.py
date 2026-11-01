@@ -1,8 +1,16 @@
 #!/usr/bin/env python3
 """Generate test vectors for the TART catalogue clients.
 
-Uses astropy for authoritative TEME->ITRS and ITRS->ICRS transforms.
+Uses astropy for authoritative TEME->ITRS, ITRS->GCRS and AltAz transforms.
 Outputs a JSON file consumed by both Python and Rust unit tests.
+
+Celestial vectors are geocentric (GCRS), not barycentric (ICRS). The ICRS
+frame is centred on the Solar System barycentre, so transforming a satellite
+position into ICRS adds the Earth's ~1 AU offset and returns the Earth's own
+direction as seen from the Sun for every satellite. GCRS is centred on the
+geocentre and keeps the satellite's real direction. Topocentric vectors are
+built by subtracting the observer's GCRS position from the satellite's, which
+is a pure rotation, so no barycentric offset is reintroduced.
 """
 
 import datetime
@@ -13,7 +21,12 @@ import numpy as np
 from astropy import coordinates as coord
 from astropy import time
 from astropy import units as u
+from astropy.utils import iers
 from sgp4.api import Satrec, jday
+
+# Keep vector generation reproducible and offline, matching the client.
+iers.conf.auto_download = False
+iers.conf.auto_max_age = None
 
 OUTPUT = Path(__file__).parent / "test_vectors.json"
 
@@ -28,7 +41,7 @@ TLE = {
 BASE = datetime.datetime(2024, 6, 12, 12, 0, 0, tzinfo=datetime.timezone.utc)
 
 
-def compute_vectors(dt):
+def compute_vectors(dt, observer):
     """Compute authoritative position/velocity vectors using astropy."""
     sat = Satrec.twoline2rv(TLE["line1"], TLE["line2"])
     jd_val, fr = jday(dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second)
@@ -59,11 +72,27 @@ def compute_vectors(dt):
         float(itrs.v_z.to_value(u.km / u.s)),
     ]
 
-    # ITRS -> ICRS (celestial)
-    icrs = itrs.transform_to(coord.ICRS())
-    ra_hours = float(icrs.ra.to(u.hourangle).value)
-    dec_deg = float(icrs.dec.to(u.deg).value)
+    # ITRS -> GCRS (geocentric celestial). NOT ICRS: that is barycentric.
+    gcrs = itrs.transform_to(coord.GCRS(obstime=t))
+    ra_hours = float(gcrs.ra.to(u.hourangle).value) % 24.0
+    dec_deg = float(gcrs.dec.to(u.deg).value)
     distance = float(np.sqrt(ecef_pos[0] ** 2 + ecef_pos[1] ** 2 + ecef_pos[2] ** 2))
+
+    # Topocentric: subtract the observer's GCRS position (rotation only).
+    location = coord.EarthLocation.from_geodetic(
+        lon=observer["lon_deg"] * u.deg,
+        lat=observer["lat_deg"] * u.deg,
+        height=observer["alt_m"] * u.m,
+    )
+    obs_pos, _ = location.get_gcrs_posvel(t)
+    sat_xyz = gcrs.cartesian.xyz
+    obs_xyz = obs_pos.xyz.reshape((3,) + (1,) * (sat_xyz.ndim - 1))
+    offset = coord.CartesianRepresentation(sat_xyz - obs_xyz).represent_as(
+        coord.SphericalRepresentation
+    )
+    topo_ra = float(offset.lon.to(u.hourangle).value) % 24.0
+    topo_dec = float(offset.lat.to(u.deg).value)
+    topo_range = float(offset.distance.to_value(u.km))
 
     return {
         "teme_km": [float(pos[0]), float(pos[1]), float(pos[2])],
@@ -73,6 +102,9 @@ def compute_vectors(dt):
         "ra_hours": ra_hours,
         "dec_degrees": dec_deg,
         "distance_km": distance,
+        "topocentric_ra_hours": topo_ra,
+        "topocentric_dec_degrees": topo_dec,
+        "topocentric_range_km": topo_range,
     }
 
 
@@ -125,7 +157,7 @@ def main():
             "date": dt.isoformat(),
             "offset_h": offset_h,
         }
-        entry.update(compute_vectors(dt))
+        entry.update(compute_vectors(dt, vectors["observer"]))
         vectors["dates"].append(entry)
 
         h = compute_horizontal(

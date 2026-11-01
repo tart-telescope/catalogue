@@ -2,8 +2,10 @@
 TART Catalogue Python client.
 
 Fetches TLE data from the /ephemerides endpoint and computes satellite
-positions in ECEF (Earth-Centered Earth-Fixed) or celestial (RA/Dec)
-coordinates. Celestial positions are derived from the ECEF positions.
+positions in ECEF (Earth-Centered Earth-Fixed), celestial (RA/Dec) or
+horizontal (Az/El) coordinates. Celestial positions are derived from the
+ECEF positions and are geocentric by default, or topocentric when an
+observer location is supplied.
 
 Caches ephemerides locally in ~/.cache/tart-catalogue/ with a 12-hour
 freshness window and LRU eviction at 100 entries. Uses a binary pickle
@@ -308,12 +310,34 @@ class CatalogueClient:
 
         return results
 
-    def celestial_positions(self, dt: Optional[datetime.datetime] = None) -> List[Dict]:
-        """Return celestial (ICRS RA/Dec) positions for all satellites.
+    def celestial_positions(
+        self,
+        dt: Optional[datetime.datetime] = None,
+        lat: Optional[float] = None,
+        lon: Optional[float] = None,
+        alt: float = 0.0,
+    ) -> List[Dict]:
+        """Return celestial (RA/Dec) positions for all satellites.
 
-        Computed from ECEF positions. All satellites share one epoch, so the
-        ITRS -> ICRS transform runs once over the whole position array
-        instead of once per satellite (same values, far less overhead).
+        By default the result is *geocentric* (GCRS): the direction of each
+        satellite as seen from the centre of the Earth. Pass ``lat`` and
+        ``lon`` (and optionally ``alt``) to get a *topocentric* direction as
+        seen from that observer, which is what a ground-based telescope needs.
+
+        Neither result is ICRS. ICRS is centred on the Solar System
+        barycentre, so transforming a satellite position into ICRS adds the
+        Earth's ~1 AU offset and collapses every satellite onto the Earth's
+        own direction as seen from the Sun (issue #14).
+
+        Args:
+            dt: UTC datetime (default: now).
+            lat: Observer latitude in degrees (optional). Requires ``lon``.
+            lon: Observer longitude in degrees (optional). Requires ``lat``.
+            alt: Observer altitude in meters (ignored without ``lat``/``lon``).
+
+        Returns list of dicts with: name, ra_hours, dec_degrees, distance_km,
+        jy. ``distance_km`` is the distance from the geocentre, or the range
+        from the observer when ``lat``/``lon`` are given.
         """
         ecef_list = self.ecef_positions(dt)
         if not ecef_list:
@@ -323,12 +347,13 @@ class CatalogueClient:
             dt = datetime.datetime.now(datetime.timezone.utc)
         elif dt.tzinfo is None:
             dt = dt.replace(tzinfo=datetime.timezone.utc)
+        if (lat is None) != (lon is None):
+            raise ValueError("lat and lon must be given together")
         t = time.Time(dt)
 
         x = np.array([sat["ecef_km"][0] for sat in ecef_list])
         y = np.array([sat["ecef_km"][1] for sat in ecef_list])
         z = np.array([sat["ecef_km"][2] for sat in ecef_list])
-        r = np.sqrt(x ** 2 + y ** 2 + z ** 2)
 
         itrs = coord.ITRS(
             x=x * u.km,
@@ -336,9 +361,29 @@ class CatalogueClient:
             z=z * u.km,
             obstime=t,
         )
-        icrs = itrs.transform_to(coord.ICRS())
-        ra_hours = icrs.ra.to(u.hourangle).value
-        dec_degrees = icrs.dec.to(u.deg).value
+        # ITRS -> GCRS is geocentric: no barycentric offset is introduced.
+        gcrs = itrs.transform_to(coord.GCRS(obstime=t))
+
+        if lat is None:
+            ra_hours = gcrs.ra.to(u.hourangle).value % 24.0
+            dec_degrees = gcrs.dec.to(u.deg).value
+            distance_km = np.sqrt(x ** 2 + y ** 2 + z ** 2)
+        else:
+            # Topocentric: subtract the observer's GCRS position, which is a
+            # pure rotation of the observer-satellite baseline, then take the
+            # direction of that baseline.
+            location = coord.EarthLocation.from_geodetic(
+                lon=lon * u.deg, lat=lat * u.deg, height=alt * u.m
+            )
+            obs_pos, _ = location.get_gcrs_posvel(t)
+            sat_xyz = gcrs.cartesian.xyz
+            obs_xyz = obs_pos.xyz.reshape((3,) + (1,) * (sat_xyz.ndim - 1))
+            offset = coord.CartesianRepresentation(
+                sat_xyz - obs_xyz
+            ).represent_as(coord.SphericalRepresentation)
+            ra_hours = offset.lon.to(u.hourangle).value % 24.0
+            dec_degrees = offset.lat.to(u.deg).value
+            distance_km = offset.distance.to_value(u.km)
 
         results = []
         for i, sat in enumerate(ecef_list):
@@ -348,7 +393,7 @@ class CatalogueClient:
                     "jy": sat.get("jy", 0.0),
                     "ra_hours": round(ra_hours[i], 6),
                     "dec_degrees": round(dec_degrees[i], 6),
-                    "distance_km": round(r[i], 1),
+                    "distance_km": round(distance_km[i], 1),
                     **({"code": sat["code"]} if sat.get("code") is not None else {}),
                 }
             )
