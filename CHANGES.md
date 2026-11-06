@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.6.5
 
 ### Fixed
 - Python client `celestial_positions()` returned barycentric RA/Dec: every
