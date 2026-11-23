@@ -1,6 +1,5 @@
 # Byte-compiled / optimized / DLL files
 catalog_cache
-poetry.lock
 __pycache__/
 *.py[cod]
 *$py.class
