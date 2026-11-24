@@ -55,6 +55,9 @@ class FileEphemerisCache(EphemerisFileCache):
         self.payload = payload
         self.downloads = []
         self.cache_root = cache_root or tempfile.mkdtemp()
+        # Tests must not sleep between request starts or between retries.
+        self.min_request_interval = 0
+        self.download_backoff = 0
 
     def get_url(self, utc_date):
         return "https://example.invalid/tle"
@@ -134,7 +137,7 @@ class TestBulkAzElHarness(unittest.TestCase):
 
         calls = []
 
-        def fake_urlopen(url):
+        def fake_urlopen(url, timeout=None):
             calls.append(url)
             return FakeResponse(TLE_LINES.encode())
 

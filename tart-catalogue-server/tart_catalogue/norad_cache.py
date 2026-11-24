@@ -176,6 +176,20 @@ class EphemerisFileCache(file_cache.FileCache):
     def get_data_date(self, obj):
         return obj.epoch_date()
 
+    def validate_payload(self, data, url):
+        """A response must be TLE data: rate limiters and error pages are
+        rejected before they can be cached as a good file."""
+        file_cache.FileCache.validate_payload(self, data, url)
+        lines = [
+            ln for ln in data.decode("utf-8", "replace").splitlines() if ln.strip()
+        ]
+        if not any(ln.startswith("1 ") for ln in lines) or not any(
+            ln.startswith("2 ") for ln in lines
+        ):
+            raise ValueError(
+                f"response from {url} is not TLE data ({len(lines)} lines)"
+            )
+
     def get_positions(self, date):
         eph = self.get_object(date)
         ret = eph.get_positions(date)

@@ -1,5 +1,36 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- Server `FileCache`: one CelesTrak failure no longer turns into an hour of
+  errors (incident of 2026-11-20, where every date of a `/bulk_az_el` request
+  failed with "Already attempted" and buried the real cause under a traceback
+  per fallback day):
+  - `urlopen` now has a 20 s timeout (it previously could hang a worker
+    thread for ever), sends an identifying `User-Agent`, and retries
+    transient errors (dropped connections, timeouts, 429/5xx) up to three
+    times with backoff
+  - responses are validated as TLE data *before* they are written, so an
+    error page from a rate limiter can never become a "good" cached file
+  - request starts are spaced 1.5 s apart per host: a cold cache answering a
+    multi-date request used to fire dozens of simultaneous requests at
+    CelesTrak, which is what got the client cut off in the first place
+  - when a download still fails, the nearest cached file (preferring an
+    earlier date) answers the request with one warning instead of walking
+    back a day per request and logging a full traceback at every step; with
+    nothing cached the walk stays bounded at five days
+  - the "already attempted" throttle message now carries the original
+    exception, so the root cause survives to the caller instead of being
+    replaced by a bare timestamp
+  - existence-check and download are serialised per cache, so concurrent
+    requests cannot duplicate a download or race the failure throttle
+
+### Changed
+- Docker Compose log rotation raised from 1 MB × 2 to 10 MB × 5 files: the
+  first (real) exception of an incident had already rotated out of the logs
+  by the time the errors were collected.
+
 ## v0.6.5
 
 ### Fixed

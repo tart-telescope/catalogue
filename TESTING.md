@@ -15,8 +15,10 @@ Uses FastAPI's `TestClient` — no running server or network needed.
 
 `test_file_cache.py`, `test_bulk_az_el.py` and `test_satellite_code.py` are
 fully offline regression harnesses: they pin the `/bulk_az_el` per-date
-behaviour and the date/epoch handling of the ephemeris file cache, and check
-the complete server chain against the astropy reference vectors in
+behaviour, the date/epoch handling of the ephemeris file cache, and the
+hardened download path (timeout, User-Agent, retries, TLE payload validation,
+per-host request spacing, and serving cached data when a download fails),
+and check the complete server chain against the astropy reference vectors in
 `test-vectors/test_vectors.json`. (`test_main.py::TestCatalog` fetches live
 TLE data from CelesTrak.)
 

@@ -15,8 +15,10 @@ services:
     logging:
       driver: "json-file"
       options:
-        max-file: "2"
-        max-size: "1m"
+        # Keep enough history to see the *first* exception of an incident:
+        # the root cause is logged once, the cascade that follows it many times.
+        max-file: "5"
+        max-size: "10m"
 
   nginx:
     image: nginx:alpine
